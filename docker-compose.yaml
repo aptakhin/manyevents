@@ -1,0 +1,31 @@
+services:
+  clickhouse:
+    image: clickhouse:24.10.2.80
+    container_name: clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_config:/etc/clickhouse-server
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: my_database
+      CLICKHOUSE_USER: username
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_PASSWORD: password
+
+  postgres:
+    image: postgres:17
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: manyevents
+    ports:
+      - 5432:5432
+
+volumes:
+  clickhouse_data:
+  clickhouse_config:
