@@ -1,8 +1,6 @@
 use serde_json::Value;
 
-use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
-
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum SerializationType {
@@ -37,17 +35,25 @@ pub fn read_event_data(event_root: &Value) -> Result<Event, EventError> {
     let mut fill_units: Vec<Unit> = Vec::new();
     let event = event_root.get("event");
     if event.is_none() {
-        return Err(EventError { message_code: "invalid_event"} );
+        return Err(EventError {
+            message_code: "invalid_event",
+        });
     }
     if !event.unwrap().is_object() {
-        return Err(EventError { message_code: "invalid_event"} );
+        return Err(EventError {
+            message_code: "invalid_event",
+        });
     }
     let units = event.unwrap().get("units");
     if units.is_none() {
-        return Err(EventError { message_code: "invalid_units"} );
+        return Err(EventError {
+            message_code: "invalid_units",
+        });
     }
     if !units.unwrap().is_array() {
-        return Err(EventError { message_code: "invalid_units"} );
+        return Err(EventError {
+            message_code: "invalid_units",
+        });
     }
     for unit in units.unwrap().as_array().unwrap() {
         let unit_type = unit.get("type");
@@ -55,11 +61,15 @@ pub fn read_event_data(event_root: &Value) -> Result<Event, EventError> {
         let mut unit_values: Vec<UnitValue> = Vec::new();
 
         if unit_type.is_none() {
-            return Err(EventError { message_code: "unit_no_type"} );
+            return Err(EventError {
+                message_code: "unit_no_type",
+            });
         }
         let type_str = unit_type.unwrap().as_str().unwrap();
         if !unit.is_object() {
-            return Err(EventError { message_code: "unit_not_object"} );
+            return Err(EventError {
+                message_code: "unit_not_object",
+            });
         }
         for val in unit.as_object().unwrap() {
             let (key, v) = val;

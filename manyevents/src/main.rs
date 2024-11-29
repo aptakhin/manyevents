@@ -1,18 +1,12 @@
 #[macro_use]
 extern crate rocket;
 
-mod schema;
 mod ch;
-
-use std::time::{Duration, UNIX_EPOCH};
+mod schema;
 
 use rocket::data::{Data, ToByteUnit};
-use rocket::http::{
-    Method::{Get, Post},
-    Status,
-};
+use rocket::http::{Method::Post, Status};
 
-use clickhouse::sql::Identifier;
 use rocket::data::Capped;
 use rocket::fairing::{self, AdHoc};
 use rocket::response::status::Custom;
@@ -25,8 +19,8 @@ use rocket::serde::{Deserialize, Serialize};
 use rocket_db_pools::sqlx::{self, Row};
 use rocket_db_pools::{Connection, Database};
 
-use crate::schema::read_event_data;
 use crate::ch::{insert_smth, ChColumn};
+use crate::schema::read_event_data;
 
 #[derive(Database)]
 #[database("postgres")]
@@ -84,7 +78,6 @@ fn push_event<'r>(req: &'r Request, data: Data<'r>) -> route::BoxFuture<'r> {
         let event = result.unwrap();
 
         // todo check schema
-        // insert into clickhouse
 
         let mut columns: Vec<ChColumn> = vec![];
 
@@ -170,13 +163,6 @@ fn rocket() -> _ {
         .mount("/api/push/v1/push-event", vec![post_push_event])
 }
 
-fn now() -> u64 {
-    UNIX_EPOCH
-        .elapsed()
-        .expect("invalid system time")
-        .as_nanos() as u64
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -223,6 +209,7 @@ mod test {
                     },
                     {
                         "type": "base",
+                        "timestamp": 1234567892,
                         "parent_span_id": "xxxx",
                         "message": "test message"
                     }
@@ -240,6 +227,5 @@ mod test {
         let response_str = response.into_string().unwrap();
         let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
         assert_eq!(push_event_response.is_success, true);
-        assert!(false);
     }
 }

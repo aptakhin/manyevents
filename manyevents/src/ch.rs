@@ -1,7 +1,7 @@
-use clickhouse::Client;
-use serde::Deserialize;
-use clickhouse::Row;
 use clickhouse::sql::Identifier;
+use clickhouse::Client;
+use clickhouse::Row;
+use serde::Deserialize;
 
 use crate::schema::SerializationType;
 
@@ -43,17 +43,19 @@ pub async fn insert_smth(table_name: String, rows: Vec<ChColumn>) {
 
     println!("Q: {:?}", x);
 
-    let column_names_str = rows.iter().map(|x| x.name.clone()).collect::<Vec<_>>().join(", ");
+    let column_names_str = rows
+        .iter()
+        .map(|x| x.name.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
     let placeholders_str = rows.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
 
     let query = format!(
         "INSERT INTO ? ({}) VALUES ({})",
-        column_names_str,
-        placeholders_str
+        column_names_str, placeholders_str
     );
     println!("sss: {:?}", query);
-    let mut y = client
-        .query(&query).bind(Identifier(&table_name));
+    let mut y = client.query(&query).bind(Identifier(&table_name));
 
     for row in rows.iter() {
         println!("pass: {}: {:?}", row.name.clone(), row.value.clone());
@@ -65,9 +67,7 @@ pub async fn insert_smth(table_name: String, rows: Vec<ChColumn>) {
         }
     }
 
-    let yy = y
-        .execute()
-        .await;
+    let yy = y.execute().await;
 
     println!("I: {:?}", yy);
 }
