@@ -1,6 +1,9 @@
 #[macro_use]
 extern crate rocket;
 
+mod schema;
+mod ch;
+
 use std::time::{Duration, UNIX_EPOCH};
 
 use rocket::data::{Data, ToByteUnit};
@@ -10,17 +13,20 @@ use rocket::http::{
 };
 
 use clickhouse::sql::Identifier;
-use serde_json::Value;
+use rocket::data::Capped;
 use rocket::fairing::{self, AdHoc};
 use rocket::response::status::Custom;
 use rocket::serde::uuid::Uuid;
-use rocket::data::Capped;
 use rocket::{route, Build, Request, Rocket, Route};
+use serde_json::Value;
 
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
 use rocket_db_pools::sqlx::{self, Row};
 use rocket_db_pools::{Connection, Database};
+
+use crate::schema::read_event_data;
+use crate::ch::{insert_smth, ChColumn};
 
 #[derive(Database)]
 #[database("postgres")]
@@ -47,7 +53,6 @@ struct PushEventResponse {
     is_success: bool,
 }
 
-
 #[derive(Debug, Serialize, Deserialize)]
 enum SerializationType {
     Int(i64),
@@ -69,57 +74,34 @@ fn push_event<'r>(req: &'r Request, data: Data<'r>) -> route::BoxFuture<'r> {
         let capped_data: Capped<String> = f.into();
         let data: Value = serde_json::from_str(&capped_data).unwrap();
 
-        let mut array: Vec<Column> = Vec::new();
+        let result = read_event_data(&data);
 
-        let event = data.get("event");
-        if event.is_none() {
-            return route::Outcome::error(Status::BadRequest);
-        }
-        if !event.unwrap().is_object() {
-            return route::Outcome::error(Status::BadRequest);
-        }
-        let units = event.unwrap().get("units");
-        if units.is_none() {
-            return route::Outcome::error(Status::BadRequest);
-        }
-        if !units.unwrap().is_array() {
-            return route::Outcome::error(Status::BadRequest);
-        }
-        for unit in units.unwrap().as_array().unwrap() {
-            let unit_type = unit.get("type");
+        // match result {
+        //     Ok(event) => println!("Data: {:?}", event),
+        //     Err(_) => todo!(),
+        // }
 
-            if unit_type.is_none() {
-                return route::Outcome::error(Status::BadRequest);
-            }
-            let type_str = unit_type.unwrap().as_str().unwrap();
-            if !unit.is_object() {
-                return route::Outcome::error(Status::BadRequest);
-            }
-            for val in unit.as_object().unwrap() {
-                let (key, v) = val;
-                println!(">>: {}", key);
-                let column_name = format!("{}_{}", type_str, key.to_string());
+        let event = result.unwrap();
 
-                let mut set_value = SerializationType::Str("".to_string());
-                if v.is_i64() {
-                    set_value = SerializationType::Int(v.as_i64().unwrap());
-                } else if v.is_f64() {
-                    set_value = SerializationType::Float(v.as_f64().unwrap());
-                } else if v.is_string() {
-                    set_value = SerializationType::Str(v.as_str().unwrap().to_string());
-                }
-                array.push(Column {
-                    name: column_name,
-                    value: set_value,
-                });
+        // todo check schema
+        // insert into clickhouse
+
+        let mut columns: Vec<ChColumn> = vec![];
+
+        for unit in event.units.iter() {
+            for value in unit.value.iter() {
+                let column = ChColumn {
+                    name: format!("{}_{}", unit.name, value.name),
+                    value: value.value.clone(),
+                };
+                println!("ins: {}: {:?}", column.name.clone(), value.value.clone());
+                columns.push(column);
             }
         }
 
-        println!("Data: {:?}", array);
+        insert_smth("chrs_async_insert".to_string(), columns).await;
 
-        let push_event_response = PushEventResponse {
-            is_success: true,
-        };
+        let push_event_response = PushEventResponse { is_success: true };
         let push_event_response_str = serde_json::to_string(&push_event_response).unwrap();
         return route::Outcome::from(req, push_event_response_str);
     })
@@ -202,16 +184,13 @@ mod test {
     use rocket::local::blocking::Client;
     use rstest::{fixture, rstest};
 
-
     #[fixture]
     fn client() -> Client {
         Client::tracked(rocket()).unwrap()
     }
 
     fn create_tenant(client: Client, title: String) -> Uuid {
-        let tenant_request = CreateTenantRequest {
-            title: title,
-        };
+        let tenant_request = CreateTenantRequest { title: title };
         let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
 
         let response = client
@@ -238,7 +217,14 @@ mod test {
                 "units": [
                     {
                         "type": "span",
-                        "value": 1
+                        "id": "xxxx",
+                        "start_time": 1234567890,
+                        "end_time": 1234567892
+                    },
+                    {
+                        "type": "base",
+                        "parent_span_id": "xxxx",
+                        "message": "test message"
                     }
                 ]
             }
