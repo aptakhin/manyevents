@@ -10,10 +10,11 @@ use rocket::http::{
 };
 
 use clickhouse::sql::Identifier;
-
+use serde_json::Value;
 use rocket::fairing::{self, AdHoc};
 use rocket::response::status::Custom;
 use rocket::serde::uuid::Uuid;
+use rocket::data::Capped;
 use rocket::{route, Build, Request, Rocket, Route};
 
 use rocket::serde::json::Json;
@@ -29,43 +30,114 @@ type Result<T, E = rocket::response::Debug<sqlx::Error>> = std::result::Result<T
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(crate = "rocket::serde")]
-struct CreateTopicRequest {
-    parent_topic_id: Option<Uuid>,
+struct CreateTenantRequest {
     title: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(crate = "rocket::serde")]
-struct CreateTopicResponse {
+struct CreateTenantResponse {
     is_success: bool,
     id: Option<Uuid>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde")]
+struct PushEventResponse {
+    is_success: bool,
+}
+
+
+#[derive(Debug, Serialize, Deserialize)]
+enum SerializationType {
+    Int(i64),
+    Float(f64),
+    Str(String),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Column {
+    name: String,
+    value: SerializationType,
+}
+
 fn push_event<'r>(req: &'r Request, data: Data<'r>) -> route::BoxFuture<'r> {
     Box::pin(async move {
-        // if !req.content_type().map_or(false, |ct| ct.is_plain()) {
-        //     println!("    => Content-Type of upload must be text/plain. Ignoring.");
-        //     return route::Outcome::error(Status::BadRequest);
-        // }
+        let stream = data.open(2.mebibytes());
+        let f = stream.into_string().await.unwrap();
 
-        return route::Outcome::from(req, format!("OK: {} bytes uploaded.", 2));
+        let capped_data: Capped<String> = f.into();
+        let data: Value = serde_json::from_str(&capped_data).unwrap();
+
+        let mut array: Vec<Column> = Vec::new();
+
+        let event = data.get("event");
+        if event.is_none() {
+            return route::Outcome::error(Status::BadRequest);
+        }
+        if !event.unwrap().is_object() {
+            return route::Outcome::error(Status::BadRequest);
+        }
+        let units = event.unwrap().get("units");
+        if units.is_none() {
+            return route::Outcome::error(Status::BadRequest);
+        }
+        if !units.unwrap().is_array() {
+            return route::Outcome::error(Status::BadRequest);
+        }
+        for unit in units.unwrap().as_array().unwrap() {
+            let unit_type = unit.get("type");
+
+            if unit_type.is_none() {
+                return route::Outcome::error(Status::BadRequest);
+            }
+            let type_str = unit_type.unwrap().as_str().unwrap();
+            if !unit.is_object() {
+                return route::Outcome::error(Status::BadRequest);
+            }
+            for val in unit.as_object().unwrap() {
+                let (key, v) = val;
+                println!(">>: {}", key);
+                let column_name = format!("{}_{}", type_str, key.to_string());
+
+                let mut set_value = SerializationType::Str("".to_string());
+                if v.is_i64() {
+                    set_value = SerializationType::Int(v.as_i64().unwrap());
+                } else if v.is_f64() {
+                    set_value = SerializationType::Float(v.as_f64().unwrap());
+                } else if v.is_string() {
+                    set_value = SerializationType::Str(v.as_str().unwrap().to_string());
+                }
+                array.push(Column {
+                    name: column_name,
+                    value: set_value,
+                });
+            }
+        }
+
+        println!("Data: {:?}", array);
+
+        let push_event_response = PushEventResponse {
+            is_success: true,
+        };
+        let push_event_response_str = serde_json::to_string(&push_event_response).unwrap();
+        return route::Outcome::from(req, push_event_response_str);
     })
 }
 
-#[post("/topic/v1/create-topic", data = "<topic>")]
-async fn create_topic(
+#[post("/v1/create-tenant", data = "<tenant>")]
+async fn create_tenant(
     mut db: Connection<Db>,
-    topic: Json<CreateTopicRequest>,
-) -> Result<Custom<Json<CreateTopicResponse>>> {
+    tenant: Json<CreateTenantRequest>,
+) -> Result<Custom<Json<CreateTenantResponse>>> {
     let results = sqlx::query(
         "
-        INSERT INTO topic (parent_topic_id, title)
-            VALUES ($1, $2)
+        INSERT INTO tenant (title)
+            VALUES ($1)
             RETURNING id
         ",
     )
-    .bind(topic.parent_topic_id)
-    .bind(topic.title.clone())
+    .bind(tenant.title.clone())
     .fetch_all(&mut **db)
     .await
     .and_then(|r| {
@@ -85,7 +157,7 @@ async fn create_topic(
         None => return Err(rocket::response::Debug(sqlx::Error::RowNotFound)),
     };
     let result_id: Option<Uuid> = Some(results[0]);
-    let response = CreateTopicResponse {
+    let response = CreateTenantResponse {
         is_success: true,
         id: result_id,
     };
@@ -112,7 +184,7 @@ fn rocket() -> _ {
         .attach(Db::init())
         // Migrations on start will work only during the early development period
         .attach(AdHoc::try_on_ignite("SQLx Migrations", run_migrations))
-        .mount("/api", routes![create_topic])
+        .mount("/api/manage", routes![create_tenant])
         .mount("/api/push/v1/push-event", vec![post_push_event])
 }
 
@@ -130,14 +202,48 @@ mod test {
     use rocket::local::blocking::Client;
     use rstest::{fixture, rstest};
 
+
     #[fixture]
     fn client() -> Client {
         Client::tracked(rocket()).unwrap()
     }
 
+    fn create_tenant(client: Client, title: String) -> Uuid {
+        let tenant_request = CreateTenantRequest {
+            title: title,
+        };
+        let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
+
+        let response = client
+            .post("/api/manage/v1/create-tenant")
+            .body(tenant_request_str)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+        let response_str = response.into_string().unwrap();
+        let topic_response: CreateTenantResponse = serde_json::from_str(&response_str).unwrap();
+        assert_eq!(topic_response.is_success, true);
+        topic_response.id.unwrap()
+    }
+
+    #[rstest]
+    fn test_create_tenant(client: Client) {
+        create_tenant(client, "test-tenant".to_string());
+    }
+
     #[rstest]
     fn test_push_event(client: Client) {
-        let push_request_str = "{}";
+        let push_request_str = r#"{
+            "event": {
+                "units": [
+                    {
+                        "type": "span",
+                        "value": 1
+                    }
+                ]
+            }
+        }
+        "#;
 
         let response = client
             .post("/api/push/v1/push-event")
@@ -146,8 +252,8 @@ mod test {
 
         assert_eq!(response.status(), Status::Ok);
         let response_str = response.into_string().unwrap();
-        // let chat_response: CreateChatResponse = serde_json::from_str(&response_str).unwrap();
-        // assert_eq!(chat_response.is_success, true);
-        // assert_eq!(chat_response.id.is_some(), true);
+        let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
+        assert_eq!(push_event_response.is_success, true);
+        assert!(false);
     }
 }
