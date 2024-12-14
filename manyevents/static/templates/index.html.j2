@@ -1,0 +1,10 @@
+{% set page="I dex" %}
+{% extends "base" %}
+
+{% block add_title %}{{page}}{% endblock %}
+
+{% block body %}
+  <p>
+    Hello {{ user_name }}!
+  </p>
+{% endblock %}

@@ -6,6 +6,7 @@ mod schema;
 
 use rocket::data::{Data, ToByteUnit};
 use rocket::http::{Method::Post, Status};
+use rocket_dyn_templates::{context, Template};
 
 use rocket::data::Capped;
 use rocket::fairing::{self, AdHoc};
@@ -45,6 +46,7 @@ struct CreateTenantResponse {
 #[serde(crate = "rocket::serde")]
 struct PushEventResponse {
     is_success: bool,
+    message_code: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -70,10 +72,14 @@ fn push_event<'r>(req: &'r Request, data: Data<'r>) -> route::BoxFuture<'r> {
 
         let result = read_event_data(&data);
 
-        // match result {
-        //     Ok(event) => println!("Data: {:?}", event),
-        //     Err(_) => todo!(),
-        // }
+        if result.is_err() {
+            let push_event_response = PushEventResponse {
+                is_success: false,
+                message_code: Some(result.unwrap_err().message_code.to_string()),
+            };
+            let push_event_response_str = serde_json::to_string(&push_event_response).unwrap();
+            return route::Outcome::from(req, push_event_response_str);
+        }
 
         let event = result.unwrap();
 
@@ -94,10 +100,45 @@ fn push_event<'r>(req: &'r Request, data: Data<'r>) -> route::BoxFuture<'r> {
 
         insert_smth("chrs_async_insert".to_string(), columns).await;
 
-        let push_event_response = PushEventResponse { is_success: true };
+        let push_event_response = PushEventResponse {
+            is_success: true,
+            message_code: None,
+        };
         let push_event_response_str = serde_json::to_string(&push_event_response).unwrap();
         return route::Outcome::from(req, push_event_response_str);
     })
+}
+
+#[get("/")]
+async fn get_root() -> Template {
+    Template::render(
+        "index",
+        context! { user_name: "Alex" },
+    )
+}
+
+#[get("/")]
+async fn get_signin() -> Template {
+    Template::render(
+        "signin",
+        context! {},
+    )
+}
+
+#[post("/")]
+async fn post_signin() -> Template {
+    Template::render(
+        "signin",
+        context! { error: "Error" },
+    )
+}
+
+#[get("/")]
+async fn get_docs() -> Template {
+    Template::render(
+        "docs",
+        context! {},
+    )
 }
 
 #[post("/v1/create-tenant", data = "<tenant>")]
@@ -157,8 +198,12 @@ fn rocket() -> _ {
     let post_push_event = Route::new(Post, "/", push_event);
     rocket::build()
         .attach(Db::init())
+        .attach(Template::fairing())
         // Migrations on start will work only during the early development period
         .attach(AdHoc::try_on_ignite("SQLx Migrations", run_migrations))
+        .mount("/", routes![get_root])
+        .mount("/signin", routes![get_signin, post_signin])
+        .mount("/docs", routes![get_docs])
         .mount("/api/manage", routes![create_tenant])
         .mount("/api/push/v1/push-event", vec![post_push_event])
 }
@@ -227,5 +272,36 @@ mod test {
         let response_str = response.into_string().unwrap();
         let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
         assert_eq!(push_event_response.is_success, true);
+    }
+
+    #[rstest]
+    fn test_push_event_failed(client: Client) {
+        let push_request_str = r#"{ "event": {} }"#;
+
+        let response = client
+            .post("/api/push/v1/push-event")
+            .body(push_request_str)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+        let response_str = response.into_string().unwrap();
+        let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
+        assert_eq!(push_event_response.is_success, false);
+        assert_eq!(push_event_response.message_code.unwrap(), "invalid_units");
+    }
+
+    #[rstest]
+    #[case("/")]
+    #[case("/signin")]
+    #[case("/docs")]
+    fn test_not_empty_200_response(#[case] s: impl AsRef<str>, client: Client) {
+        let response = client.get(s.as_ref()).dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+        let response_str = response.into_string().unwrap();
+        assert!(
+            !response_str.is_empty(),
+            "Response string should not be empty"
+        );
     }
 }

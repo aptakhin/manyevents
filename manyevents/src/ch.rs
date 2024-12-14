@@ -27,14 +27,15 @@ pub async fn insert_smth(table_name: String, rows: Vec<ChColumn>) {
             "
             CREATE OR REPLACE TABLE ? (
                 base_timestamp DateTime64(3),
-                base_parent_span_id   String,
-                span_id   String,
+                base_parent_span_id String,
+                base_message String,
+                span_id String,
                 span_start_time DateTime64(3),
                 span_end_time DateTime64(3),
-                base_message   String
             )
             ENGINE = MergeTree
             ORDER BY base_timestamp
+            PARTITION BY toYYYYMMDD(base_timestamp)
             ",
         )
         .bind(Identifier(&table_name))

@@ -28,7 +28,7 @@ pub struct Event {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventError<'a> {
-    message_code: &'a str,
+    pub message_code: &'a str,
 }
 
 pub fn read_event_data(event_root: &Value) -> Result<Event, EventError> {

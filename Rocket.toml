@@ -1,2 +1,8 @@
 [default.databases.postgres]
 url = "postgresql://postgres:postgres@localhost:5432/manyevents"
+
+[debug]
+template_dir = "manyevents/static/templates"
+
+[release]
+template_dir = "/var/opt/www/templates"

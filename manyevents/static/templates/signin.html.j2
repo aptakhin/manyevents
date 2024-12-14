@@ -1,0 +1,16 @@
+{% set page="Signin/Signup" %}
+{% extends "base" %}
+
+{% block add_title %}{{page}}{% endblock %}
+
+{% block body %}
+  {% if error %}
+     <h2 class="error">{{ error }}</h2>
+  {% endif %}
+
+  <form action="/signin" method="post">
+  email: <input type="text" name="email"><br/>
+  password: <input type="password" name="password"><br/>
+  <input type="submit" value="Submit">
+  </form>
+{% endblock %}

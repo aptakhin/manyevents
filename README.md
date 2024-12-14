@@ -10,7 +10,9 @@ Then:
 
 ```bash
 make run
+# run tests once
 make test
+# run tests permanently watching for the source changes
 make testw
 ```
 
