@@ -5,13 +5,16 @@ mod ch;
 mod schema;
 
 use rocket::data::{Data, ToByteUnit};
-use rocket::http::{Method::Post, Status};
+use rocket::http::{Method::Post, Status, ContentType};
 use rocket_dyn_templates::{context, Template};
+use sha2::{Sha256, Digest};
+use hex::encode;
 
 use rocket::data::Capped;
 use rocket::fairing::{self, AdHoc};
 use rocket::response::status::Custom;
 use rocket::serde::uuid::Uuid;
+use rocket::form::Form;
 use rocket::{route, Build, Request, Rocket, Route};
 use serde_json::Value;
 
@@ -125,8 +128,75 @@ async fn get_signin() -> Template {
     )
 }
 
-#[post("/")]
-async fn post_signin() -> Template {
+#[derive(Debug, FromForm)]
+pub struct Signin {
+    pub email: String,
+    pub password: String,
+}
+
+fn hash_password(password: String) -> String {
+    let mut hasher = Sha256::new();
+
+    hasher.update(b"dfsdf");
+    hasher.update(password.as_bytes());
+
+    // acquire hash digest in the form of GenericArray,
+    // which in this case is equivalent to [u8; 16]
+    let result = hasher.finalize();
+    encode(result)
+}
+
+#[post("/", data = "<signin_form>")]
+async fn post_signin(
+    signin_form: Form<Signin>,
+    mut db: Connection<Db>,
+) -> Template {
+    let signin = signin_form.into_inner();
+    let hashed_password = hash_password(signin.password.clone());
+    let result: Result<(bool, Uuid, String), String> = sqlx::query_as(
+        "
+        WITH ins AS (
+            INSERT INTO account (email, password)
+            VALUES ($1, $2)
+            ON CONFLICT (email) DO NOTHING
+            RETURNING id, password
+        )
+        SELECT true, id, password FROM ins
+        UNION ALL
+        SELECT false, id, password FROM account WHERE email = $1
+        LIMIT 1
+        ",
+    )
+    .bind(signin.email.clone())
+    .bind(hashed_password.clone())
+    .fetch_one(&mut **db)
+    .await
+    .and_then(|r| {
+        Ok(r)
+    })
+    .or_else(|e| {
+        println!("Database query error: {}", e);
+        Err("nooo".to_string())
+    });
+
+    if result.is_err() {
+        return Template::render(
+            "signin",
+            context! { error: "Oups" },
+        );
+    }
+
+    let (is_inserted, account_id, db_password) = result.unwrap();
+
+    println!("Success: {}, ID: {}, Password: {}", is_inserted, account_id, db_password);
+
+    if hashed_password != db_password {
+        return Template::render(
+            "signin",
+            context! { error: "Passwords not matching" },
+        )
+    }
+
     Template::render(
         "signin",
         context! { error: "Error" },
@@ -294,7 +364,7 @@ mod test {
     #[case("/")]
     #[case("/signin")]
     #[case("/docs")]
-    fn test_not_empty_200_response(#[case] s: impl AsRef<str>, client: Client) {
+    fn test_get_not_empty_200_response(#[case] s: impl AsRef<str>, client: Client) {
         let response = client.get(s.as_ref()).dispatch();
 
         assert_eq!(response.status(), Status::Ok);
@@ -303,5 +373,26 @@ mod test {
             !response_str.is_empty(),
             "Response string should not be empty"
         );
+    }
+
+    #[rstest]
+    fn test_post_signin(client: Client) {
+        let push_request_str = r#"email=aaaa&password=xxx"#;
+
+        let response = client
+            .post("/signin")
+            .header(ContentType::Form)
+            .body(push_request_str)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+        let response_str = response.into_string().unwrap();
+        assert_eq!(
+            response_str,
+            "Response string should not be empty"
+        );
+        // let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
+        // assert_eq!(push_event_response.is_success, false);
+        // assert_eq!(push_event_response.message_code.unwrap(), "invalid_units");
     }
 }
