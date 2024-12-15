@@ -8,7 +8,7 @@ mod schema;
 use rocket::data::{Data, ToByteUnit};
 use rocket::http::{ContentType, Method::Post, Status};
 use rocket_dyn_templates::{context, Template};
-use sha2::{Sha256};
+use sha2::Sha256;
 use sqlx::PgConnection;
 
 use rocket::data::Capped;
@@ -141,10 +141,14 @@ pub enum TemplateOrRedirect {
 async fn post_signin(signin_form: Form<Signin>, mut db: Connection<Db>) -> TemplateOrRedirect {
     let signin = signin_form.into_inner();
 
-    let signin_response = auth_signin(SigninRequest {
-        email: signin.email,
-        password: signin.password,
-    }, db).await;
+    let signin_response = auth_signin(
+        SigninRequest {
+            email: signin.email,
+            password: signin.password,
+        },
+        db,
+    )
+    .await;
 
     if signin_response.is_err() {
         return TemplateOrRedirect::Template(Template::render(

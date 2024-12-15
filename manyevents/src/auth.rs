@@ -10,21 +10,20 @@ use rocket::serde::uuid::Uuid;
 
 use rocket::serde::json::Json;
 
-use rocket::http::{Status};
+use rocket::http::Status;
 use rocket::serde::{Deserialize, Serialize};
 use rocket_db_pools::sqlx::{self};
-use rocket_db_pools::{Connection};
+use rocket_db_pools::Connection;
 use rocket_dyn_templates::{context, Template};
 use sha2::{Digest, Sha256};
 
 use rocket::response::status::Custom;
 use rocket::{route, Build, Request, Rocket, Route};
 
+use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use hmac::{Hmac, Mac};
 use rand::Rng;
-use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use std::time::{SystemTime, UNIX_EPOCH};
-// use anyhow::Result;
 
 #[derive(Deserialize, Debug)]
 pub struct SigninRequest {
@@ -55,7 +54,6 @@ pub enum AuthError {
     InvalidToken,
 }
 
-// Type alias for HMAC-SHA256
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug)]
@@ -64,19 +62,16 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn new(user_id: &str, secret_key: &[u8]) -> Result<Self> {
+    pub fn new(user_id: String, secret_key: &[u8]) -> Result<Self> {
         let salt: [u8; 16] = rand::thread_rng().gen();
         let salt_hex = hex::encode(salt);
 
-        // Get current timestamp
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("SystemTime error")
             .as_secs()
             .to_string();
 
-
-        // Combine message parts
         let message = format!("{}{}{}", user_id, timestamp, salt_hex);
 
         // Create HMAC
@@ -101,7 +96,10 @@ fn hash_password(password: String) -> String {
     encode(result)
 }
 
-pub async fn auth_signin(signin_request: SigninRequest, mut db: Connection<Db>) -> Result<SigninResponse, String> {
+pub async fn auth_signin(
+    signin_request: SigninRequest,
+    mut db: Connection<Db>,
+) -> Result<SigninResponse, String> {
     let hashed_password = hash_password(signin_request.password.clone());
     let result: Result<(bool, Uuid, String), String> = sqlx::query_as(
         "
@@ -175,8 +173,11 @@ pub async fn add_token_with_type(
     });
 
     match result {
-        Ok((bb, id)) => Ok(AuthTokenInserted { token_id: id, token: token }),
-        Err(_) => Err(AuthError::InvalidToken)
+        Ok((bb, id)) => Ok(AuthTokenInserted {
+            token_id: id,
+            token: token,
+        }),
+        Err(_) => Err(AuthError::InvalidToken),
     }
 }
 
@@ -207,8 +208,11 @@ pub async fn check_token_within_type(
     });
 
     match result {
-        Ok((id, type_)) => Ok(AuthEntity { id: id, type_: type_ }),
-        Err(_) => Err(AuthError::InvalidToken)
+        Ok((id, type_)) => Ok(AuthEntity {
+            id: id,
+            type_: type_,
+        }),
+        Err(_) => Err(AuthError::InvalidToken),
     }
 }
 
@@ -243,20 +247,17 @@ pub async fn internal_auth_add_token(
     request: Json<AddTokenRequest>,
     mut db: Connection<Db>,
 ) -> Result<Custom<Json<AddTokenResponse>>> {
-
     let secret_key = rand::thread_rng().gen::<[u8; 32]>();
-    let user_id = "user123";
-    // Generate secure token
-    let secure_token = Token::new(user_id, &secret_key)?;
-    println!("Secure token: {}", secure_token.token);
+    let target_id = encode(request.target_id);
+    let secure_token = Token::new(target_id.clone(), &secret_key)?;
 
     let add_token = add_token_with_type(
         secure_token.token.clone(),
         request.type_.clone(),
         request.target_id,
         db,
-    ).await;
-    // println!("XX {:?}/{}", add_token, secure_token.token.clone());
+    )
+    .await;
 
     let response = match add_token {
         Ok(token_inserted) => AddTokenResponse {
@@ -277,12 +278,7 @@ pub async fn internal_auth_check_token(
     request: Json<CheckTokenRequest>,
     mut db: Connection<Db>,
 ) -> Result<Custom<Json<CheckTokenResponse>>> {
-
-    let check = check_token_within_type(
-        request.token.clone(),
-        request.type_.clone(),
-        db,
-    ).await;
+    let check = check_token_within_type(request.token.clone(), request.type_.clone(), db).await;
 
     let response = match check {
         Ok(auth_entity) => CheckTokenResponse {
