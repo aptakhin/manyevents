@@ -1,7 +1,4 @@
-#[macro_use]
 use crate::Db;
-
-#[macro_use]
 use crate::rocket;
 use crate::Result;
 use hex::encode;
@@ -14,14 +11,10 @@ use rocket::http::Status;
 use rocket::serde::{Deserialize, Serialize};
 use rocket_db_pools::sqlx::{self};
 use rocket_db_pools::Connection;
-use rocket_dyn_templates::{context, Template};
 use sha2::{Digest, Sha256};
 
 use rocket::response::status::Custom;
-use rocket::{route, Build, Request, Rocket, Route};
 
-use base64::{engine::general_purpose::URL_SAFE, Engine as _};
-use hmac::{Hmac, Mac};
 use rand::Rng;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -53,8 +46,6 @@ pub struct AuthTokenInserted {
 pub enum AuthError {
     InvalidToken,
 }
-
-type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug)]
 pub struct Token {
@@ -140,8 +131,8 @@ pub async fn auth_signin(
     }
 
     Ok(SigninResponse {
-        is_inserted: is_inserted,
-        account_id: account_id,
+        is_inserted,
+        account_id,
     })
 }
 
@@ -173,9 +164,9 @@ pub async fn add_token_with_type(
     });
 
     match result {
-        Ok((bb, id)) => Ok(AuthTokenInserted {
+        Ok((_, id)) => Ok(AuthTokenInserted {
             token_id: id,
-            token: token,
+            token,
         }),
         Err(_) => Err(AuthError::InvalidToken),
     }
@@ -209,8 +200,8 @@ pub async fn check_token_within_type(
 
     match result {
         Ok((id, type_)) => Ok(AuthEntity {
-            id: id,
-            type_: type_,
+            id,
+            type_,
         }),
         Err(_) => Err(AuthError::InvalidToken),
     }

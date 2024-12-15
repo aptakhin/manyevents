@@ -11,4 +11,4 @@ testw::
 	(cd manyevents && RUST_LOG=debug RUST_BACKTRACE=1 cargo watch --clear -- cargo test -- --show-output)
 
 fmt::
-	(cd manyevents && cargo fmt)
+	(cd manyevents && cargo fmt --all)

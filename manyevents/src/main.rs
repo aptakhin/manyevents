@@ -6,10 +6,8 @@ mod ch;
 mod schema;
 
 use rocket::data::{Data, ToByteUnit};
-use rocket::http::{ContentType, Method::Post, Status};
+use rocket::http::{Method::Post, Status, ContentType};
 use rocket_dyn_templates::{context, Template};
-use sha2::Sha256;
-use sqlx::PgConnection;
 
 use rocket::data::Capped;
 use rocket::fairing::{self, AdHoc};
