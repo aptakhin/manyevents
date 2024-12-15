@@ -207,7 +207,7 @@ pub async fn check_token_within_type(
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AddTokenRequest {
     pub type_: String,
     pub target_id: Uuid,
@@ -220,7 +220,7 @@ pub struct AddTokenResponse {
     pub token: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CheckTokenRequest {
     pub type_: String,
     pub token: String,
@@ -327,24 +327,65 @@ mod test {
     }
 
     #[rstest]
-    fn test_check_token(client: Client) {
+    fn test_check_token_successful(client: Client) {
         let account_id = Uuid::new_v4();
-
         let add_token_request = AddTokenRequest {
             type_: "auth".to_string(),
             target_id: account_id,
             title: "hello".to_string(),
         };
-        let token_response = add_token(add_token_request, &client);
+        let token_response = add_token(add_token_request.clone(), &client);
         assert_eq!(token_response.is_added, true);
-
         let check_token_request = CheckTokenRequest {
-            type_: "auth".to_string(),
+            type_: add_token_request.type_.clone(),
             token: token_response.token.unwrap(),
         };
+
         let check_token_response = check_token(check_token_request, &client);
 
         assert_eq!(check_token_response.successful, true);
         assert_eq!(check_token_response.target_id, Some(account_id));
+    }
+
+    #[rstest]
+    fn test_check_token_failed_on_token(client: Client) {
+        let account_id = Uuid::new_v4();
+        let add_token_request = AddTokenRequest {
+            type_: "auth".to_string(),
+            target_id: account_id,
+            title: "hello".to_string(),
+        };
+        let token_response = add_token(add_token_request.clone(), &client);
+        assert_eq!(token_response.is_added, true);
+        let check_token_request = CheckTokenRequest {
+            type_: add_token_request.type_.clone(),
+            token: format!("{}_wrong_token", token_response.token.unwrap()),
+        };
+
+        let check_token_response = check_token(check_token_request, &client);
+
+        assert_eq!(check_token_response.successful, false);
+        assert_eq!(check_token_response.target_id, None);
+    }
+
+    #[rstest]
+    fn test_check_token_failed_on_other_type(client: Client) {
+        let account_id = Uuid::new_v4();
+        let add_token_request = AddTokenRequest {
+            type_: "auth".to_string(),
+            target_id: account_id,
+            title: "hello".to_string(),
+        };
+        let token_response = add_token(add_token_request.clone(), &client);
+        assert_eq!(token_response.is_added, true);
+        let check_token_request = CheckTokenRequest {
+            type_: format!("{}_wrong_type", add_token_request.type_),
+            token: token_response.token.unwrap(),
+        };
+
+        let check_token_response = check_token(check_token_request, &client);
+
+        assert_eq!(check_token_response.successful, false);
+        assert_eq!(check_token_response.target_id, None);
     }
 }
