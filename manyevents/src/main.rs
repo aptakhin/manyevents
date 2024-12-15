@@ -1,20 +1,22 @@
 #[macro_use]
 extern crate rocket;
 
+mod auth;
 mod ch;
 mod schema;
 
 use rocket::data::{Data, ToByteUnit};
-use rocket::http::{Method::Post, Status, ContentType};
+use rocket::http::{ContentType, Method::Post, Status};
 use rocket_dyn_templates::{context, Template};
-use sha2::{Sha256, Digest};
-use hex::encode;
+use sha2::{Sha256};
+use sqlx::PgConnection;
 
 use rocket::data::Capped;
 use rocket::fairing::{self, AdHoc};
-use rocket::response::status::Custom;
-use rocket::serde::uuid::Uuid;
 use rocket::form::Form;
+use rocket::response::status::Custom;
+use rocket::response::Redirect;
+use rocket::serde::uuid::Uuid;
 use rocket::{route, Build, Request, Rocket, Route};
 use serde_json::Value;
 
@@ -23,10 +25,11 @@ use rocket::serde::{Deserialize, Serialize};
 use rocket_db_pools::sqlx::{self, Row};
 use rocket_db_pools::{Connection, Database};
 
+use crate::auth::{auth_signin, internal_auth_add_token, internal_auth_check_token, SigninRequest};
 use crate::ch::{insert_smth, ChColumn};
 use crate::schema::read_event_data;
 
-#[derive(Database)]
+#[derive(Database, Debug, Clone)]
 #[database("postgres")]
 struct Db(sqlx::PgPool);
 
@@ -114,18 +117,12 @@ fn push_event<'r>(req: &'r Request, data: Data<'r>) -> route::BoxFuture<'r> {
 
 #[get("/")]
 async fn get_root() -> Template {
-    Template::render(
-        "index",
-        context! { user_name: "Alex" },
-    )
+    Template::render("index", context! { user_name: "Alex" })
 }
 
 #[get("/")]
 async fn get_signin() -> Template {
-    Template::render(
-        "signin",
-        context! {},
-    )
+    Template::render("signin", context! {})
 }
 
 #[derive(Debug, FromForm)]
@@ -134,81 +131,39 @@ pub struct Signin {
     pub password: String,
 }
 
-fn hash_password(password: String) -> String {
-    let mut hasher = Sha256::new();
-
-    hasher.update(b"dfsdf");
-    hasher.update(password.as_bytes());
-
-    // acquire hash digest in the form of GenericArray,
-    // which in this case is equivalent to [u8; 16]
-    let result = hasher.finalize();
-    encode(result)
+#[derive(Responder)]
+pub enum TemplateOrRedirect {
+    Template(Template),
+    Redirect(Redirect),
 }
 
 #[post("/", data = "<signin_form>")]
-async fn post_signin(
-    signin_form: Form<Signin>,
-    mut db: Connection<Db>,
-) -> Template {
+async fn post_signin(signin_form: Form<Signin>, mut db: Connection<Db>) -> TemplateOrRedirect {
     let signin = signin_form.into_inner();
-    let hashed_password = hash_password(signin.password.clone());
-    let result: Result<(bool, Uuid, String), String> = sqlx::query_as(
-        "
-        WITH ins AS (
-            INSERT INTO account (email, password)
-            VALUES ($1, $2)
-            ON CONFLICT (email) DO NOTHING
-            RETURNING id, password
-        )
-        SELECT true, id, password FROM ins
-        UNION ALL
-        SELECT false, id, password FROM account WHERE email = $1
-        LIMIT 1
-        ",
-    )
-    .bind(signin.email.clone())
-    .bind(hashed_password.clone())
-    .fetch_one(&mut **db)
-    .await
-    .and_then(|r| {
-        Ok(r)
-    })
-    .or_else(|e| {
-        println!("Database query error: {}", e);
-        Err("nooo".to_string())
-    });
 
-    if result.is_err() {
-        return Template::render(
+    let signin_response = auth_signin(SigninRequest {
+        email: signin.email,
+        password: signin.password,
+    }, db).await;
+
+    if signin_response.is_err() {
+        return TemplateOrRedirect::Template(Template::render(
             "signin",
-            context! { error: "Oups" },
-        );
+            context! { error: signin_response.unwrap_err() },
+        ));
     }
 
-    let (is_inserted, account_id, db_password) = result.unwrap();
-
-    println!("Success: {}, ID: {}, Password: {}", is_inserted, account_id, db_password);
-
-    if hashed_password != db_password {
-        return Template::render(
-            "signin",
-            context! { error: "Passwords not matching" },
-        )
-    }
-
-    Template::render(
-        "signin",
-        context! { error: "Error" },
-    )
+    TemplateOrRedirect::Redirect(Redirect::to("/dashboard"))
 }
 
 #[get("/")]
 async fn get_docs() -> Template {
-    Template::render(
-        "docs",
-        context! {},
-    )
+    Template::render("docs", context! {})
+}
+
+#[get("/")]
+async fn get_dashboard() -> Template {
+    Template::render("dashboard", context! {})
 }
 
 #[post("/v1/create-tenant", data = "<tenant>")]
@@ -263,8 +218,7 @@ async fn run_migrations(rocket: Rocket<Build>) -> fairing::Result {
     }
 }
 
-#[launch]
-fn rocket() -> _ {
+fn rocket() -> Rocket<Build> {
     let post_push_event = Route::new(Post, "/", push_event);
     rocket::build()
         .attach(Db::init())
@@ -274,8 +228,20 @@ fn rocket() -> _ {
         .mount("/", routes![get_root])
         .mount("/signin", routes![get_signin, post_signin])
         .mount("/docs", routes![get_docs])
+        .mount("/dashboard", routes![get_dashboard])
         .mount("/api/manage", routes![create_tenant])
         .mount("/api/push/v1/push-event", vec![post_push_event])
+        .mount("/api-internal/add-token", routes![internal_auth_add_token])
+        .mount(
+            "/api-internal/check-token",
+            routes![internal_auth_check_token],
+        )
+}
+
+#[rocket::main]
+async fn main() -> Result<(), rocket::Error> {
+    let _rocket = rocket().launch().await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -289,6 +255,17 @@ mod test {
     fn client() -> Client {
         Client::tracked(rocket()).unwrap()
     }
+
+    // #[rstest]
+    // async fn test_push_event_failedxxx(client: Client) {
+    //     let tenant_request = CreateTenantRequest { title: title };
+    //     let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
+
+    //     let response = client
+    //         .post("/api/manage/v1/create-tenant")
+    //         .body(tenant_request_str)
+    //         .dispatch();
+    // }
 
     fn create_tenant(client: Client, title: String) -> Uuid {
         let tenant_request = CreateTenantRequest { title: title };
@@ -376,7 +353,7 @@ mod test {
     }
 
     #[rstest]
-    fn test_post_signin(client: Client) {
+    fn test_post_signin_successful_redirect(client: Client) {
         let push_request_str = r#"email=aaaa&password=xxx"#;
 
         let response = client
@@ -385,14 +362,13 @@ mod test {
             .body(push_request_str)
             .dispatch();
 
-        assert_eq!(response.status(), Status::Ok);
-        let response_str = response.into_string().unwrap();
-        assert_eq!(
-            response_str,
-            "Response string should not be empty"
+        assert_eq!(response.status(), Status::SeeOther);
+        let location_header = response.headers().get_one("Location");
+        assert!(
+            location_header.is_some(),
+            "Location header should be present"
         );
-        // let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
-        // assert_eq!(push_event_response.is_success, false);
-        // assert_eq!(push_event_response.message_code.unwrap(), "invalid_units");
+        let redirect_url = location_header.unwrap();
+        assert_eq!(redirect_url, "/dashboard");
     }
 }

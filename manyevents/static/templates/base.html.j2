@@ -3,23 +3,24 @@
 <title>{% block title %}ManyEvents/{% block add_title %}{% endblock %}{% endblock %}</title>
 
 <style type="text/css">
-    body {
-        font-family: "Times New Roman", Times, serif;
-    }
+body {
+    font-family: "Times New Roman", Times, serif;
+}
 
-    .error {
-        color: red;
-    }
+.error {
+    color: red;
+}
 </style>
 </head>
 
 <h1>ManyEvents</h1>
 
-<a href="/signin">Signin/Signup</a>
-<a href="/docs">Docs</a>
+<a href="/signin">Signin/Signup</a>&nbsp;|&nbsp;
+<a href="/docs">Docs</a>&nbsp;|&nbsp;
+<a href="/dashboard">Dashboard</a>
 
 <h2>{{ page }}</h2>
 {% block body %}{% endblock %}
 
-<p>Style from 2000xx, Alexander Ptakhin</p>
+<p>We have cookies. Style from 2000 year by Alexander Ptakhin</p>
 </html>
