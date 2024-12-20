@@ -5,10 +5,12 @@ mod auth;
 mod ch;
 mod schema;
 
+use hex::encode;
+
 use rocket::data::{Data, ToByteUnit};
 use rocket::http::{Method::Post, Status, ContentType};
 use rocket_dyn_templates::{context, Template};
-
+use rocket::http::CookieJar;
 use rocket::data::Capped;
 use rocket::fairing::{self, AdHoc};
 use rocket::form::Form;
@@ -16,6 +18,9 @@ use rocket::response::status::Custom;
 use rocket::response::Redirect;
 use rocket::serde::uuid::Uuid;
 use rocket::{route, Build, Request, Rocket, Route};
+use rocket::request::{self, FromRequest};
+use rocket::outcome::IntoOutcome;
+
 use serde_json::Value;
 
 use rocket::serde::json::Json;
@@ -23,7 +28,7 @@ use rocket::serde::{Deserialize, Serialize};
 use rocket_db_pools::sqlx::{self, Row};
 use rocket_db_pools::{Connection, Database};
 
-use crate::auth::{auth_signin, internal_auth_add_token, internal_auth_add_account, internal_auth_check_token, SigninRequest};
+use crate::auth::{auth_signin, check_token_within_type, add_auth_token, internal_auth_add_token, internal_auth_add_account, internal_auth_check_token, SigninRequest};
 use crate::ch::{insert_smth, ChColumn};
 use crate::schema::read_event_data;
 
@@ -118,7 +123,7 @@ async fn get_root() -> Template {
     Template::render("index", context! { user_name: "Alex" })
 }
 
-#[get("/")]
+#[get("/signin")]
 async fn get_signin() -> Template {
     Template::render("signin", context! {})
 }
@@ -135,8 +140,8 @@ pub enum TemplateOrRedirect {
     Redirect(Redirect),
 }
 
-#[post("/", data = "<signin_form>")]
-async fn post_signin(signin_form: Form<Signin>, mut db: Connection<Db>) -> TemplateOrRedirect {
+#[post("/signin", data = "<signin_form>")]
+async fn post_signin(signin_form: Form<Signin>, mut db: Connection<Db>, mut cookies: &CookieJar<'_>) -> TemplateOrRedirect {
     let signin = signin_form.into_inner();
 
     let signin_response = auth_signin(
@@ -155,25 +160,54 @@ async fn post_signin(signin_form: Form<Signin>, mut db: Connection<Db>) -> Templ
         ));
     }
 
+    let new_token = "".to_string();
+    // let auth_token = add_auth_token(new_token.clone(), "auth".to_string(), signin_response.unwrap().account_id, db).await;
+    cookies.add(("_s".to_string(), new_token));
+
     TemplateOrRedirect::Redirect(Redirect::to("/dashboard"))
 }
 
-#[get("/")]
+#[get("/docs")]
 async fn get_docs() -> Template {
     Template::render("docs", context! {})
 }
 
-#[get("/")]
-async fn get_dashboard() -> Template {
+pub struct Authenticated {
+    pub token: String,
+}
+
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for Authenticated {
+    type Error = std::convert::Infallible;
+
+    async fn from_request(request: &'r Request<'_>) -> request::Outcome<Self, Self::Error> {
+        request.cookies()
+            .get("Authenticated")
+            .and_then(|c| c.value().parse().ok() )
+            .map(|id| Authenticated { token: id })
+            .or_forward(Status::Unauthorized)
+    }
+}
+
+#[get("/dashboard")]
+async fn get_dashboard(authentificated: Authenticated, mut db: Connection<Db>) -> Template {
+    let resp = check_token_within_type(authentificated.token, "auth".to_string(), db).await;
+    let check = match resp {
+        Ok(auth) => encode(auth.id),
+        Err(_) => "Err".to_string(),
+    };
+
     Template::render("dashboard", context! {
         push_token_live: "me-push-live-xxxxxx22222",
+        check,
     })
 }
 
 #[post("/v1/create-tenant", data = "<tenant>")]
 async fn create_tenant(
-    mut db: Connection<Db>,
     tenant: Json<CreateTenantRequest>,
+    mut db: Connection<Db>,
 ) -> Result<Custom<Json<CreateTenantResponse>>> {
     let results = sqlx::query(
         "
@@ -229,10 +263,7 @@ fn rocket() -> Rocket<Build> {
         .attach(Template::fairing())
         // Migrations on start will work only during the early development period
         .attach(AdHoc::try_on_ignite("SQLx Migrations", run_migrations))
-        .mount("/", routes![get_root])
-        .mount("/signin", routes![get_signin, post_signin])
-        .mount("/docs", routes![get_docs])
-        .mount("/dashboard", routes![get_dashboard])
+        .mount("/", routes![get_root, get_signin, post_signin, get_docs, get_dashboard])
         .mount("/api/manage", routes![create_tenant])
         .mount("/api/push/v1/push-event", vec![post_push_event]);
 
@@ -240,12 +271,7 @@ fn rocket() -> Rocket<Build> {
     // should be disabled for prod
     if cfg!(debug_assertions) {
         build = build
-            .mount("/api-internal/add-account", routes![internal_auth_add_account])
-            .mount("/api-internal/add-token", routes![internal_auth_add_token])
-            .mount(
-                "/api-internal/check-token",
-                routes![internal_auth_check_token],
-            );
+            .mount("/api-internal", routes![internal_auth_add_account, internal_auth_add_token, internal_auth_check_token])
     }
     build
 }

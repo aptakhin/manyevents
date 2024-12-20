@@ -279,7 +279,7 @@ pub struct CheckAuthTokenResponse {
     pub account_id: Option<Uuid>,
 }
 
-#[post("/", data = "<request>")]
+#[post("/add-account", data = "<request>")]
 pub async fn internal_auth_add_account(
     request: Json<AddAccountRequest>,
     mut db: Connection<Db>,
@@ -305,7 +305,7 @@ pub async fn internal_auth_add_account(
     Ok(Custom(Status::Ok, Json(response)))
 }
 
-#[post("/", data = "<request>")]
+#[post("/add-token", data = "<request>")]
 pub async fn internal_auth_add_token(
     request: Json<AddAuthTokenRequest>,
     mut db: Connection<Db>,
@@ -336,7 +336,7 @@ pub async fn internal_auth_add_token(
     Ok(Custom(Status::Ok, Json(response)))
 }
 
-#[post("/", data = "<request>")]
+#[post("/check-token", data = "<request>")]
 pub async fn internal_auth_check_token(
     request: Json<CheckAuthTokenRequest>,
     mut db: Connection<Db>,
