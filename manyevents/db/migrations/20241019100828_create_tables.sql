@@ -13,9 +13,9 @@ CREATE TABLE account (
 -- insert dummy one
 INSERT INTO account (id) VALUES ('00000000-0000-0000-0000-000000000000');
 
-CREATE TABLE token (
+CREATE TABLE auth_token (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    target_id UUID,
+    account_id UUID REFERENCES account (id),
     created_by_account_id UUID REFERENCES account (id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -36,6 +36,17 @@ CREATE TABLE tenant (
     title VARCHAR NOT NULL
 );
 
+-- Many to many tenant and account
+CREATE TABLE tenant_and_account (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    created_by_account_id UUID REFERENCES account (id),
+    tenant_id UUID REFERENCES tenant (id),
+    account_id UUID REFERENCES account (id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL
+);
+
 CREATE TABLE scope (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id UUID REFERENCES tenant (id),
@@ -43,12 +54,14 @@ CREATE TABLE scope (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+
     slug VARCHAR NOT NULL,
     title VARCHAR NOT NULL
 );
 
 CREATE TABLE storage_credential (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID REFERENCES tenant (id),
     created_by_account_id UUID REFERENCES account (id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -69,6 +82,18 @@ CREATE TABLE scope_environment (
     title VARCHAR NOT NULL
 );
 
+CREATE TABLE push_token (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    scope_environment_id UUID REFERENCES scope_environment (id),
+    created_by_account_id UUID REFERENCES account (id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    expiring_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    token VARCHAR NOT NULL,
+    UNIQUE(token)
+);
+
 CREATE TABLE component_version (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     created_by_account_id UUID REFERENCES account (id),
@@ -86,9 +111,9 @@ CREATE TABLE component_version (
 CREATE TABLE scope_environment_and_component (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     created_by_account_id UUID REFERENCES account (id),
+    scope_environment_id UUID REFERENCES scope_environment (id),
+    component_version_id UUID REFERENCES component_version (id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
-    scope_environment_id UUID REFERENCES scope_environment (id),
-    component_version_id UUID REFERENCES component_version (id)
+    deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL
 );

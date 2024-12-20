@@ -37,6 +37,12 @@ pub struct AuthEntity {
 }
 
 #[derive(Deserialize, Debug)]
+pub struct AccountInserted {
+    pub is_inserted: bool,
+    pub account_id: Uuid,
+}
+
+#[derive(Deserialize, Debug)]
 pub struct AuthTokenInserted {
     pub token_id: Uuid,
     pub token: String,
@@ -121,11 +127,6 @@ pub async fn auth_signin(
     }
 
     let (is_inserted, account_id, db_hashed_password) = result.unwrap();
-    println!(
-        "Success: {}, ID: {}, Password: {}",
-        is_inserted, account_id, db_hashed_password
-    );
-
     if hashed_password != db_hashed_password {
         return Err("Passwords not matching!".to_string());
     }
@@ -136,24 +137,57 @@ pub async fn auth_signin(
     })
 }
 
-pub async fn add_token_with_type(
+
+pub async fn add_account(
+    email: String,
+    hashed_password: String,
+    mut db: Connection<Db>,
+) -> Result<AccountInserted, AuthError> {
+    let result: Result<(bool, Uuid), String> = sqlx::query_as(
+        "
+        INSERT INTO account
+        (email, password)
+        VALUES ($1, $2)
+        RETURNING true, id
+        ",
+    )
+    .bind(email.clone())
+    .bind(hashed_password.clone())
+    .fetch_one(&mut **db)
+    .await
+    .and_then(|r| Ok(r))
+    .or_else(|e| {
+        println!("Database query error: {}", e);
+        Err("nooo".to_string())
+    });
+
+    match result {
+        Ok((is_inserted, account_id)) => Ok(AccountInserted {
+            is_inserted,
+            account_id,
+        }),
+        Err(_) => Err(AuthError::InvalidToken),
+    }
+}
+
+pub async fn add_auth_token(
     token: String,
     type_: String,
-    target_id: Uuid,
+    account_id: Uuid,
     mut db: Connection<Db>,
 ) -> Result<AuthTokenInserted, AuthError> {
     let device_id = "device_id".to_string();
     let result: Result<(bool, Uuid), String> = sqlx::query_as(
         "
-        INSERT INTO token
-        (token, type, target_id, device_id)
+        INSERT INTO auth_token
+        (token, type, account_id, device_id)
         VALUES ($1, $2, $3, $4)
         RETURNING true, id
         ",
     )
     .bind(token.clone())
     .bind(type_.clone())
-    .bind(target_id)
+    .bind(account_id)
     .bind(device_id.clone())
     .fetch_one(&mut **db)
     .await
@@ -180,9 +214,9 @@ pub async fn check_token_within_type(
     let result: Result<(Uuid, String), String> = sqlx::query_as(
         "
         SELECT
-            target_id,
+            account_id,
             type
-        FROM token
+        FROM auth_token
         WHERE
             token = $1 AND type = $2
         LIMIT 1
@@ -208,54 +242,92 @@ pub async fn check_token_within_type(
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AddTokenRequest {
+pub struct AddAccountRequest {
+    pub email: String,
+    pub hashed_password: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AddAccountResponse {
+    pub is_added: bool,
+    pub account_id: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AddAuthTokenRequest {
     pub type_: String,
-    pub target_id: Uuid,
+    pub account_id: Uuid,
     pub title: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AddTokenResponse {
+pub struct AddAuthTokenResponse {
     pub is_added: bool,
     pub token: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct CheckTokenRequest {
+pub struct CheckAuthTokenRequest {
     pub type_: String,
     pub token: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CheckTokenResponse {
+pub struct CheckAuthTokenResponse {
     pub successful: bool,
     pub type_: String,
-    pub target_id: Option<Uuid>,
+    pub account_id: Option<Uuid>,
+}
+
+#[post("/", data = "<request>")]
+pub async fn internal_auth_add_account(
+    request: Json<AddAccountRequest>,
+    mut db: Connection<Db>,
+) -> Result<Custom<Json<AddAccountResponse>>> {
+    let add_account = add_account(
+        request.email.clone(),
+        request.hashed_password.clone(),
+        db,
+    )
+    .await;
+
+    let response = match add_account {
+        Ok(account_inserted) => AddAccountResponse {
+            is_added: true,
+            account_id: Some(account_inserted.account_id),
+        },
+        Err(_) => AddAccountResponse {
+            is_added: false,
+            account_id: None,
+        },
+    };
+
+    Ok(Custom(Status::Ok, Json(response)))
 }
 
 #[post("/", data = "<request>")]
 pub async fn internal_auth_add_token(
-    request: Json<AddTokenRequest>,
+    request: Json<AddAuthTokenRequest>,
     mut db: Connection<Db>,
-) -> Result<Custom<Json<AddTokenResponse>>> {
+) -> Result<Custom<Json<AddAuthTokenResponse>>> {
     let secret_key = rand::thread_rng().gen::<[u8; 32]>();
-    let target_id = encode(request.target_id);
-    let secure_token = Token::new(target_id.clone(), &secret_key)?;
+    let account_id = encode(request.account_id);
+    let secure_token = Token::new(account_id.clone(), &secret_key)?;
 
-    let add_token = add_token_with_type(
+    let add_token = add_auth_token(
         secure_token.token.clone(),
         request.type_.clone(),
-        request.target_id,
+        request.account_id,
         db,
     )
     .await;
 
     let response = match add_token {
-        Ok(token_inserted) => AddTokenResponse {
+        Ok(token_inserted) => AddAuthTokenResponse {
             is_added: true,
             token: Some(token_inserted.token),
         },
-        Err(_) => AddTokenResponse {
+        Err(_) => AddAuthTokenResponse {
             is_added: false,
             token: None,
         },
@@ -266,20 +338,20 @@ pub async fn internal_auth_add_token(
 
 #[post("/", data = "<request>")]
 pub async fn internal_auth_check_token(
-    request: Json<CheckTokenRequest>,
+    request: Json<CheckAuthTokenRequest>,
     mut db: Connection<Db>,
-) -> Result<Custom<Json<CheckTokenResponse>>> {
+) -> Result<Custom<Json<CheckAuthTokenResponse>>> {
     let check = check_token_within_type(request.token.clone(), request.type_.clone(), db).await;
 
     let response = match check {
-        Ok(auth_entity) => CheckTokenResponse {
+        Ok(auth_entity) => CheckAuthTokenResponse {
             successful: true,
-            target_id: Some(auth_entity.id),
+            account_id: Some(auth_entity.id),
             type_: auth_entity.type_,
         },
-        Err(_) => CheckTokenResponse {
+        Err(_) => CheckAuthTokenResponse {
             successful: false,
-            target_id: None,
+            account_id: None,
             type_: "".to_string(),
         },
     };
@@ -298,7 +370,7 @@ mod test {
         Client::tracked(rocket()).unwrap()
     }
 
-    fn add_token(request: AddTokenRequest, client: &Client) -> AddTokenResponse {
+    fn add_auth_token(request: AddAuthTokenRequest, client: &Client) -> AddAuthTokenResponse {
         let request_str = serde_json::to_string(&request).unwrap();
 
         let response = client
@@ -308,11 +380,11 @@ mod test {
 
         assert_eq!(response.status(), Status::Ok);
         let response_str = response.into_string().unwrap();
-        let topic_response: AddTokenResponse = serde_json::from_str(&response_str).unwrap();
+        let topic_response: AddAuthTokenResponse = serde_json::from_str(&response_str).unwrap();
         topic_response
     }
 
-    fn check_token(request: CheckTokenRequest, client: &Client) -> CheckTokenResponse {
+    fn check_auth_token(request: CheckAuthTokenRequest, client: &Client) -> CheckAuthTokenResponse {
         let test_token_request_str = serde_json::to_string(&request).unwrap();
 
         let response = client
@@ -322,70 +394,101 @@ mod test {
 
         assert_eq!(response.status(), Status::Ok);
         let response_str = response.into_string().unwrap();
-        let token_response: CheckTokenResponse = serde_json::from_str(&response_str).unwrap();
+        let token_response: CheckAuthTokenResponse = serde_json::from_str(&response_str).unwrap();
         token_response
     }
 
+    fn add_account(request: AddAccountRequest, client: &Client) -> AddAccountResponse {
+        let add_account_request_str = serde_json::to_string(&request).unwrap();
+
+        let response = client
+            .post("/api-internal/add-account")
+            .body(add_account_request_str)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+        let response_str = response.into_string().unwrap();
+        let account_response: AddAccountResponse = serde_json::from_str(&response_str).unwrap();
+        assert_eq!(account_response.is_added, true);
+        account_response
+    }
+
+    fn add_random_email_account(client: &Client) -> AddAccountResponse {
+        let random_email = Uuid::new_v4();
+        let add_account_request = AddAccountRequest {
+            email: encode(random_email),
+            hashed_password: "123".to_string(),
+        };
+        let account_response = add_account(add_account_request.clone(), &client);
+        assert_eq!(account_response.is_added, true);
+        account_response
+    }
+
     #[rstest]
-    fn test_check_token_successful(client: Client) {
-        let account_id = Uuid::new_v4();
-        let add_token_request = AddTokenRequest {
+    fn test_add_account(client: Client) {
+        add_random_email_account(&client);
+    }
+
+    #[rstest]
+    fn test_check_auth_token_successful(client: Client) {
+        let account = add_random_email_account(&client);
+        let add_token_request = AddAuthTokenRequest {
             type_: "auth".to_string(),
-            target_id: account_id,
+            account_id: account.account_id.unwrap(),
             title: "hello".to_string(),
         };
-        let token_response = add_token(add_token_request.clone(), &client);
+        let token_response = add_auth_token(add_token_request.clone(), &client);
         assert_eq!(token_response.is_added, true);
-        let check_token_request = CheckTokenRequest {
+        let check_token_request = CheckAuthTokenRequest {
             type_: add_token_request.type_.clone(),
             token: token_response.token.unwrap(),
         };
 
-        let check_token_response = check_token(check_token_request, &client);
+        let check_token_response = check_auth_token(check_token_request, &client);
 
         assert_eq!(check_token_response.successful, true);
-        assert_eq!(check_token_response.target_id, Some(account_id));
+        assert_eq!(check_token_response.account_id, Some(account.account_id.unwrap()));
     }
 
     #[rstest]
-    fn test_check_token_failed_on_token(client: Client) {
-        let account_id = Uuid::new_v4();
-        let add_token_request = AddTokenRequest {
+    fn test_check_auth_token_failed_on_wrong_token(client: Client) {
+        let account = add_random_email_account(&client);
+        let add_token_request = AddAuthTokenRequest {
             type_: "auth".to_string(),
-            target_id: account_id,
+            account_id: account.account_id.unwrap(),
             title: "hello".to_string(),
         };
-        let token_response = add_token(add_token_request.clone(), &client);
+        let token_response = add_auth_token(add_token_request.clone(), &client);
         assert_eq!(token_response.is_added, true);
-        let check_token_request = CheckTokenRequest {
+        let check_token_request = CheckAuthTokenRequest {
             type_: add_token_request.type_.clone(),
             token: format!("{}_wrong_token", token_response.token.unwrap()),
         };
 
-        let check_token_response = check_token(check_token_request, &client);
+        let check_token_response = check_auth_token(check_token_request, &client);
 
         assert_eq!(check_token_response.successful, false);
-        assert_eq!(check_token_response.target_id, None);
+        assert_eq!(check_token_response.account_id, None);
     }
 
     #[rstest]
-    fn test_check_token_failed_on_other_type(client: Client) {
-        let account_id = Uuid::new_v4();
-        let add_token_request = AddTokenRequest {
+    fn test_check_auth_token_failed_on_wrong_type(client: Client) {
+        let account = add_random_email_account(&client);
+        let add_token_request = AddAuthTokenRequest {
             type_: "auth".to_string(),
-            target_id: account_id,
+            account_id: account.account_id.unwrap(),
             title: "hello".to_string(),
         };
-        let token_response = add_token(add_token_request.clone(), &client);
+        let token_response = add_auth_token(add_token_request.clone(), &client);
         assert_eq!(token_response.is_added, true);
-        let check_token_request = CheckTokenRequest {
+        let check_token_request = CheckAuthTokenRequest {
             type_: format!("{}_wrong_type", add_token_request.type_),
             token: token_response.token.unwrap(),
         };
 
-        let check_token_response = check_token(check_token_request, &client);
+        let check_token_response = check_auth_token(check_token_request, &client);
 
         assert_eq!(check_token_response.successful, false);
-        assert_eq!(check_token_response.target_id, None);
+        assert_eq!(check_token_response.account_id, None);
     }
 }

@@ -23,7 +23,7 @@ use rocket::serde::{Deserialize, Serialize};
 use rocket_db_pools::sqlx::{self, Row};
 use rocket_db_pools::{Connection, Database};
 
-use crate::auth::{auth_signin, internal_auth_add_token, internal_auth_check_token, SigninRequest};
+use crate::auth::{auth_signin, internal_auth_add_token, internal_auth_add_account, internal_auth_check_token, SigninRequest};
 use crate::ch::{insert_smth, ChColumn};
 use crate::schema::read_event_data;
 
@@ -165,7 +165,9 @@ async fn get_docs() -> Template {
 
 #[get("/")]
 async fn get_dashboard() -> Template {
-    Template::render("dashboard", context! {})
+    Template::render("dashboard", context! {
+        push_token_live: "me-push-live-xxxxxx22222",
+    })
 }
 
 #[post("/v1/create-tenant", data = "<tenant>")]
@@ -222,7 +224,7 @@ async fn run_migrations(rocket: Rocket<Build>) -> fairing::Result {
 
 fn rocket() -> Rocket<Build> {
     let post_push_event = Route::new(Post, "/", push_event);
-    rocket::build()
+    let mut build = rocket::build()
         .attach(Db::init())
         .attach(Template::fairing())
         // Migrations on start will work only during the early development period
@@ -232,12 +234,20 @@ fn rocket() -> Rocket<Build> {
         .mount("/docs", routes![get_docs])
         .mount("/dashboard", routes![get_dashboard])
         .mount("/api/manage", routes![create_tenant])
-        .mount("/api/push/v1/push-event", vec![post_push_event])
-        .mount("/api-internal/add-token", routes![internal_auth_add_token])
-        .mount(
-            "/api-internal/check-token",
-            routes![internal_auth_check_token],
-        )
+        .mount("/api/push/v1/push-event", vec![post_push_event]);
+
+    // this is internal endpoints added only because of issues to use database in tests
+    // should be disabled for prod
+    if cfg!(debug_assertions) {
+        build = build
+            .mount("/api-internal/add-account", routes![internal_auth_add_account])
+            .mount("/api-internal/add-token", routes![internal_auth_add_token])
+            .mount(
+                "/api-internal/check-token",
+                routes![internal_auth_check_token],
+            );
+    }
+    build
 }
 
 #[rocket::main]
