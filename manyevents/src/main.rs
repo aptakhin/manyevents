@@ -39,6 +39,7 @@ use crate::auth::{auth_signin, SigninRequest};
 use crate::ch::{insert_smth, ChColumn};
 use crate::schema::read_event_data;
 
+type DbPool = PgPool;
 type DbConnection = sqlx::pool::PoolConnection<sqlx::Postgres>;
 
 async fn make_db() -> PgPool {
@@ -151,14 +152,12 @@ struct CreateTenantRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(crate = "rocket::serde")]
 struct CreateTenantResponse {
     is_success: bool,
     id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(crate = "rocket::serde")]
 struct PushEventResponse {
     is_success: bool,
     message_code: Option<String>,
@@ -219,7 +218,7 @@ async fn post_signin(/*jar: CookieJar, */State(pool): State<PgPool>, Form(signin
             email: signin_form.email,
             password: signin_form.password,
         },
-        pool,
+        &pool,
     )
     .await;
 
