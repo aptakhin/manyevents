@@ -3,6 +3,17 @@
 use crate::DatabaseConnection;
 use hex::encode;
 
+use axum::{
+    async_trait,
+    extract::{FromRef, Form, FromRequest, FromRequestParts, State, Request},
+    http::{request::Parts, StatusCode},
+    response::{Html, Redirect, Response, IntoResponse},
+    routing::get, routing::post,
+    Router,
+    Json,
+    body::{Body, Bytes},
+};
+
 use uuid::Uuid;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 
@@ -132,73 +143,73 @@ pub async fn auth_signin(
 }
 
 
-// pub async fn add_account(
-//     email: String,
-//     hashed_password: String,
-//     mut db: Connection<Db>,
-// ) -> Result<AccountInserted, AuthError> {
-//     let result: Result<(bool, Uuid), String> = sqlx::query_as(
-//         "
-//         INSERT INTO account
-//         (email, password)
-//         VALUES ($1, $2)
-//         RETURNING true, id
-//         ",
-//     )
-//     .bind(email.clone())
-//     .bind(hashed_password.clone())
-//     .fetch_one(&mut **db)
-//     .await
-//     .and_then(|r| Ok(r))
-//     .or_else(|e| {
-//         println!("Database query error: {}", e);
-//         Err("nooo".to_string())
-//     });
+pub async fn add_account(
+    email: String,
+    hashed_password: String,
+    pool: &PgPool,
+) -> Result<AccountInserted, AuthError> {
+    let result: Result<(bool, Uuid), String> = sqlx::query_as(
+        "
+        INSERT INTO account
+        (email, password)
+        VALUES ($1, $2)
+        RETURNING true, id
+        ",
+    )
+    .bind(email.clone())
+    .bind(hashed_password.clone())
+    .fetch_one(&*pool)
+    .await
+    .and_then(|r| Ok(r))
+    .or_else(|e| {
+        println!("Database query error: {}", e);
+        Err("nooo".to_string())
+    });
 
-//     match result {
-//         Ok((is_inserted, account_id)) => Ok(AccountInserted {
-//             is_inserted,
-//             account_id,
-//         }),
-//         Err(_) => Err(AuthError::InvalidToken),
-//     }
-// }
+    match result {
+        Ok((is_inserted, account_id)) => Ok(AccountInserted {
+            is_inserted,
+            account_id,
+        }),
+        Err(_) => Err(AuthError::InvalidToken),
+    }
+}
 
-// pub async fn add_auth_token(
-//     token: String,
-//     type_: String,
-//     account_id: Uuid,
-//     mut db: Connection<Db>,
-// ) -> Result<AuthTokenInserted, AuthError> {
-//     let device_id = "device_id".to_string();
-//     let result: Result<(bool, Uuid), String> = sqlx::query_as(
-//         "
-//         INSERT INTO auth_token
-//         (token, type, account_id, device_id)
-//         VALUES ($1, $2, $3, $4)
-//         RETURNING true, id
-//         ",
-//     )
-//     .bind(token.clone())
-//     .bind(type_.clone())
-//     .bind(account_id)
-//     .bind(device_id.clone())
-//     .fetch_one(&mut **db)
-//     .await
-//     .and_then(|r| Ok(r))
-//     .or_else(|e| {
-//         println!("Database query error: {}", e);
-//         Err("nooo".to_string())
-//     });
+pub async fn add_auth_token(
+    token: String,
+    type_: String,
+    account_id: Uuid,
+    pool: PgPool,
+) -> Result<AuthTokenInserted, AuthError> {
+    let device_id = "device_id".to_string();
+    let result: Result<(bool, Uuid), String> = sqlx::query_as(
+        "
+        INSERT INTO auth_token
+        (token, type, account_id, device_id)
+        VALUES ($1, $2, $3, $4)
+        RETURNING true, id
+        ",
+    )
+    .bind(token.clone())
+    .bind(type_.clone())
+    .bind(account_id)
+    .bind(device_id.clone())
+    .fetch_one(&pool)
+    .await
+    .and_then(|r| Ok(r))
+    .or_else(|e| {
+        println!("Database query error: {}", e);
+        Err("nooo".to_string())
+    });
 
-//     match result {
-//         Ok((_, id)) => Ok(AuthTokenInserted {
-//             token_id: id,
-//             token,
-//         }),
-//         Err(_) => Err(AuthError::InvalidToken),
-//     }
-// }
+    match result {
+        Ok((_, id)) => Ok(AuthTokenInserted {
+            token_id: id,
+            token,
+        }),
+        Err(_) => Err(AuthError::InvalidToken),
+    }
+}
 
 // pub async fn check_token_within_type(
 //     token: String,
@@ -352,76 +363,73 @@ pub struct CheckAuthTokenResponse {
 //     Ok(Custom(Status::Ok, Json(response)))
 // }
 
-// #[cfg(test)]
-// mod test {
-//     use super::*;
-//     use rocket::http::Status;
-//     use rocket::local::blocking::Client;
-//     use rstest::{fixture, rstest};
+#[cfg(test)]
+mod test {
+    use super::*;
+    use axum::{
+        body::Body,
+        http::{self, Request, StatusCode},
+    };
+    use rstest::{fixture, rstest};
+    use crate::make_db;
+    use crate::test::pool;
 
-//     #[fixture]
-//     fn client() -> Client {
-//         Client::tracked(rocket()).unwrap()
-//     }
 
-//     fn add_auth_token(request: AddAuthTokenRequest, client: &Client) -> AddAuthTokenResponse {
-//         let request_str = serde_json::to_string(&request).unwrap();
+    // fn add_auth_token(request: AddAuthTokenRequest, client: &Client) -> AddAuthTokenResponse {
+    //     let request_str = serde_json::to_string(&request).unwrap();
 
-//         let response = client
-//             .post("/api-internal/add-token")
-//             .body(request_str)
-//             .dispatch();
+    //     let response = client
+    //         .post("/api-internal/add-token")
+    //         .body(request_str)
+    //         .dispatch();
 
-//         assert_eq!(response.status(), Status::Ok);
-//         let response_str = response.into_string().unwrap();
-//         let topic_response: AddAuthTokenResponse = serde_json::from_str(&response_str).unwrap();
-//         topic_response
-//     }
+    //     assert_eq!(response.status(), Status::Ok);
+    //     let response_str = response.into_string().unwrap();
+    //     let topic_response: AddAuthTokenResponse = serde_json::from_str(&response_str).unwrap();
+    //     topic_response
+    // }
 
-//     fn check_auth_token(request: CheckAuthTokenRequest, client: &Client) -> CheckAuthTokenResponse {
-//         let test_token_request_str = serde_json::to_string(&request).unwrap();
+    // fn check_auth_token(request: CheckAuthTokenRequest, client: &Client) -> CheckAuthTokenResponse {
+    //     let test_token_request_str = serde_json::to_string(&request).unwrap();
 
-//         let response = client
-//             .post("/api-internal/check-token")
-//             .body(test_token_request_str)
-//             .dispatch();
+    //     let response = client
+    //         .post("/api-internal/check-token")
+    //         .body(test_token_request_str)
+    //         .dispatch();
 
-//         assert_eq!(response.status(), Status::Ok);
-//         let response_str = response.into_string().unwrap();
-//         let token_response: CheckAuthTokenResponse = serde_json::from_str(&response_str).unwrap();
-//         token_response
-//     }
+    //     assert_eq!(response.status(), Status::Ok);
+    //     let response_str = response.into_string().unwrap();
+    //     let token_response: CheckAuthTokenResponse = serde_json::from_str(&response_str).unwrap();
+    //     token_response
+    // }
 
-//     fn add_account(request: AddAccountRequest, client: &Client) -> AddAccountResponse {
-//         let add_account_request_str = serde_json::to_string(&request).unwrap();
+    // fn add_account(request: AddAccountRequest, client: &Client) -> AddAccountResponse {
+    //     let add_account_request_str = serde_json::to_string(&request).unwrap();
 
-//         let response = client
-//             .post("/api-internal/add-account")
-//             .body(add_account_request_str)
-//             .dispatch();
+    //     let response = client
+    //         .post("/api-internal/add-account")
+    //         .body(add_account_request_str)
+    //         .dispatch();
 
-//         assert_eq!(response.status(), Status::Ok);
-//         let response_str = response.into_string().unwrap();
-//         let account_response: AddAccountResponse = serde_json::from_str(&response_str).unwrap();
-//         assert_eq!(account_response.is_added, true);
-//         account_response
-//     }
+    //     assert_eq!(response.status(), Status::Ok);
+    //     let response_str = response.into_string().unwrap();
+    //     let account_response: AddAccountResponse = serde_json::from_str(&response_str).unwrap();
+    //     assert_eq!(account_response.is_added, true);
+    //     account_response
+    // }
 
-//     fn add_random_email_account(client: &Client) -> AddAccountResponse {
-//         let random_email = Uuid::new_v4();
-//         let add_account_request = AddAccountRequest {
-//             email: encode(random_email),
-//             hashed_password: "123".to_string(),
-//         };
-//         let account_response = add_account(add_account_request.clone(), &client);
-//         assert_eq!(account_response.is_added, true);
-//         account_response
-//     }
 
-//     #[rstest]
-//     fn test_add_account(client: Client) {
-//         add_random_email_account(&client);
-//     }
+    async fn add_random_email_account(pool: &PgPool) -> AccountInserted {
+        let random_email = Uuid::new_v4();
+        let account_inserted = add_account(encode(random_email), "123".to_string(), &pool).await;
+        account_inserted.expect("Should be inserted")
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_add_account(#[future] pool: PgPool) {
+        add_random_email_account(&pool.await).await;
+    }
 
 //     #[rstest]
 //     fn test_check_auth_token_successful(client: Client) {
@@ -485,4 +493,4 @@ pub struct CheckAuthTokenResponse {
 //         assert_eq!(check_token_response.successful, false);
 //         assert_eq!(check_token_response.account_id, None);
 //     }
-// }
+}

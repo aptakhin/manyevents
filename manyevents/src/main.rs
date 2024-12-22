@@ -383,14 +383,19 @@ mod test {
     use rstest::{fixture, rstest};
 
     #[fixture]
-    async fn app() -> Router<()> {
+    pub async fn app() -> Router<()> {
         routes_app().await
     }
 
     #[fixture]
-    async fn conn() -> sqlx::pool::PoolConnection<sqlx::Postgres> {
+    pub async fn conn() -> sqlx::pool::PoolConnection<sqlx::Postgres> {
         let pool = make_db().await;
         pool.acquire().await.expect("Error connection")
+    }
+
+    #[fixture]
+    pub async fn pool() -> PgPool {
+        make_db().await
     }
 
     async fn create_tenant(title: String, app: Router<()>) -> Uuid {
