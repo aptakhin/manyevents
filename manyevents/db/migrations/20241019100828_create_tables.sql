@@ -10,9 +10,6 @@ CREATE TABLE account (
     UNIQUE(email)
 );
 
--- insert dummy one
-INSERT INTO account (id) VALUES ('00000000-0000-0000-0000-000000000000');
-
 CREATE TABLE auth_token (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     account_id UUID REFERENCES account (id),

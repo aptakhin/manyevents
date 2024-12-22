@@ -336,6 +336,12 @@ where
 async fn routes_app() -> Router<()> {
     let pool = make_db().await;
 
+    let result = sqlx::migrate!("db/migrations")
+        .run(&pool)
+        .await.
+        expect("Migrations panic!");
+    println!("Migration result {:?}", result);
+
     let router: Router<()> = Router::new()
         .route("/", get(get_root))
         .route("/signin", get(get_signin).post(post_signin))
