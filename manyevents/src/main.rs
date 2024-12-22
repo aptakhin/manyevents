@@ -39,6 +39,8 @@ use crate::auth::{auth_signin, SigninRequest};
 use crate::ch::{insert_smth, ChColumn};
 use crate::schema::read_event_data;
 
+type DbConnection = sqlx::pool::PoolConnection<sqlx::Postgres>;
+
 async fn make_db() -> PgPool {
     let db_connection_str = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/manyevents".to_string());
@@ -353,10 +355,8 @@ async fn push_event(BufferRequestBody(body): BufferRequestBody) -> String {
     push_event_response_str
 }
 
-// extractor that shows how to consume the request body upfront
 struct BufferRequestBody(Bytes);
 
-// we must implement `FromRequest` (and not `FromRequestParts`) to consume the body
 #[async_trait]
 impl<S> FromRequest<S> for BufferRequestBody
 where
@@ -388,7 +388,7 @@ mod test {
     }
 
     #[fixture]
-    pub async fn conn() -> sqlx::pool::PoolConnection<sqlx::Postgres> {
+    pub async fn conn() -> DbConnection {
         let pool = make_db().await;
         pool.acquire().await.expect("Error connection")
     }
