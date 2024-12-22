@@ -5,6 +5,7 @@ use axum::{
     response::{Html, Redirect, Response, IntoResponse},
     routing::get,
     Router,
+    Json,
 };
 
 use http_body_util::BodyExt;
@@ -20,6 +21,7 @@ use axum_extra::{
     // headers::authorization::{Authorization, Bearer},
     extract::cookie::{CookieJar, Cookie},
 };
+use sqlx::Row;
 
 // use sqlx::types::Uuid;
 use uuid::Uuid;
@@ -175,7 +177,6 @@ async fn get_root() -> Html<String> {
 }
 
 async fn get_signin() -> Html<String> {
-    // Template::render("signin", context! {})
     let mut env = Environment::new();
     env.set_loader(path_loader("static/templates"));
     let tmpl = env.get_template("signin.html.j2").unwrap();
@@ -221,7 +222,6 @@ async fn post_signin(/*jar: CookieJar, */State(pool): State<PgPool>, Form(signin
         return HtmlOrRedirect::Render(Html(tmpl.render(context!(name => "John")).unwrap()));
     }
 
-
     // let new_token = "".to_string();
     // // let auth_token = add_auth_token(new_token.clone(), "auth".to_string(), signin_response.unwrap().account_id, db).await;
     // cookies.add(("_s".to_string(), new_token));
@@ -256,6 +256,51 @@ async fn get_dashboard() -> HtmlOrRedirect {
     HtmlOrRedirect::Render(Html(tmpl.render(context!(name => "John")).unwrap()))
 }
 
+async fn create_tenant(
+    Json(tenant): Json<CreateTenantRequest>,
+    State(pool): State<PgPool>,
+) -> Json<CreateTenantResponse> {
+    let results = sqlx::query(
+        "
+        INSERT INTO tenant (title)
+            VALUES ($1)
+            RETURNING id
+        ",
+    )
+    .bind(tenant.title.clone())
+    .fetch_all(&pool)
+    .await
+    .and_then(|r| {
+        let processed_result: Vec<Uuid> = r
+            .iter()
+            .map(|row| row.get::<Uuid, _>(0))
+            .collect::<Vec<Uuid>>();
+        Ok(Some(processed_result))
+    })
+    .or_else(|e| {
+        println!("Database query error: {}", e);
+        Err(e)
+    });
+
+    let results = match results {
+        Ok(Some(res)) => res,
+        Ok(None) => return Json(CreateTenantResponse {
+            is_success: false,
+            id: None,
+        }),
+        Err(_) => return Json(CreateTenantResponse {
+            is_success: false,
+            id: None,
+        }),
+    };
+    let result_id: Option<Uuid> = Some(results[0]);
+    let response = CreateTenantResponse {
+        is_success: true,
+        id: result_id,
+    };
+    Json(response)
+}
+
 
 #[cfg(test)]
 mod test {
@@ -277,37 +322,28 @@ mod test {
         pool.acquire().await.expect("Error connection")
     }
 
-    // #[rstest]
-    // async fn test_push_event_failedxxx(client: Client) {
-    //     let tenant_request = CreateTenantRequest { title: title };
-    //     let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
+    async fn create_tenant(title: String, app: Router<()>) -> Uuid {
+        let tenant_request = CreateTenantRequest { title: title };
+        let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
 
-    //     let response = client
-    //         .post("/api/manage/v1/create-tenant")
-    //         .body(tenant_request_str)
-    //         .dispatch();
-    // }
+        let response = app
+            .oneshot(Request::builder().method(http::Method::POST).header("Content-Type", "application/x-www-form-urlencoded").uri("/api/manage/v1/create-tenant").body(Body::from(tenant_request_str)).unwrap())
+            .await
+            .unwrap();
 
-    // fn create_tenant(client: Client, title: String) -> Uuid {
-    //     let tenant_request = CreateTenantRequest { title: title };
-    //     let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body_str = std::str::from_utf8(&body).unwrap();
+        let tenant_response: CreateTenantResponse = serde_json::from_str(&body_str).unwrap();
+        assert_eq!(tenant_response.is_success, true);
+        tenant_response.id.unwrap()
+    }
 
-    //     let response = client
-    //         .post("/api/manage/v1/create-tenant")
-    //         .body(tenant_request_str)
-    //         .dispatch();
-
-    //     assert_eq!(response.status(), Status::Ok);
-    //     let response_str = response.into_string().unwrap();
-    //     let topic_response: CreateTenantResponse = serde_json::from_str(&response_str).unwrap();
-    //     assert_eq!(topic_response.is_success, true);
-    //     topic_response.id.unwrap()
-    // }
-
-    // #[rstest]
-    // fn test_create_tenant(client: Client) {
-    //     create_tenant(client, "test-tenant".to_string());
-    // }
+    #[rstest]
+    #[tokio::test]
+    async fn test_create_tenant(#[future] app: Router<()>) {
+        create_tenant("test-tenant".to_string(), app.await);
+    }
 
     // #[rstest]
     // fn test_push_event(client: Client) {
@@ -372,7 +408,6 @@ mod test {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let body_str = std::str::from_utf8(&body).unwrap();
         assert!(!body_str.is_empty(), "Response string should not be empty");
