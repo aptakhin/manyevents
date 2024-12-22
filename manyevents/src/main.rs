@@ -1,48 +1,38 @@
 use axum::{
     async_trait,
-    extract::{FromRef, Form, FromRequest, FromRequestParts, State, Request},
+    body::Bytes,
+    extract::{Form, FromRef, FromRequest, FromRequestParts, Request, State},
     http::{request::Parts, StatusCode},
-    response::{Html, Redirect, Response, IntoResponse},
-    routing::get, routing::post,
-    Router,
-    Json,
-    body::{Body, Bytes},
+    response::{Html, IntoResponse, Redirect, Response},
+    routing::get,
+    routing::post,
+    Json, Router,
 };
 
 use http_body_util::BodyExt;
+use minijinja::{context, path_loader, Environment};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::Row;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tower::util::ServiceExt;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use minijinja::{path_loader, Environment, context};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use axum_extra::{
-    // TypedHeader,
-    // headers::authorization::{Authorization, Bearer},
-    extract::cookie::{CookieJar, Cookie},
-};
-use sqlx::Row;
 
-// use sqlx::types::Uuid;
 use uuid::Uuid;
 
 mod auth;
 mod ch;
 mod schema;
 
-use hex::encode;
-
-// use crate::auth::{auth_signin, check_token_within_type, add_auth_token, internal_auth_add_token, internal_auth_add_account, internal_auth_check_token, SigninRequest};
 use crate::auth::{auth_signin, SigninRequest};
 use crate::ch::{insert_smth, ChColumn};
 use crate::schema::read_event_data;
 
 type DbPool = PgPool;
-type DbConnection = sqlx::pool::PoolConnection<sqlx::Postgres>;
 
-async fn make_db() -> PgPool {
+async fn make_db() -> DbPool {
     let db_connection_str = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/manyevents".to_string());
 
@@ -59,27 +49,15 @@ async fn routes_app() -> Router<()> {
 
     let router: Router<()> = Router::new()
         .route("/", get(get_root))
-        .route(
-            "/signin",
-            get(get_signin).post(post_signin),
-        )
-        .route(
-            "/docs",
-            get(get_docs),
-        )
-        .route(
-            "/dashboard",
-            get(get_dashboard),
-        )
-        .route(
-            "/api/push/v1/push-event",
-            post(push_event),
-        )
+        .route("/signin", get(get_signin).post(post_signin))
+        .route("/docs", get(get_docs))
+        .route("/dashboard", get(get_dashboard))
+        .route("/api/push/v1/push-event", post(push_event))
+        .route("/api/manage/v1/create-tenant", post(create_tenant))
         .route(
             "/db",
             get(using_connection_pool_extractor).post(using_connection_extractor),
         )
-
         .with_state(pool);
 
     router
@@ -103,7 +81,7 @@ async fn main() {
 }
 
 async fn using_connection_pool_extractor(
-    State(pool): State<PgPool>,
+    State(pool): State<DbPool>,
 ) -> Result<String, (StatusCode, String)> {
     sqlx::query_scalar("select 'hello world from pg'")
         .fetch_one(&pool)
@@ -117,13 +95,13 @@ struct DatabaseConnection(sqlx::pool::PoolConnection<sqlx::Postgres>);
 #[async_trait]
 impl<S> FromRequestParts<S> for DatabaseConnection
 where
-    PgPool: FromRef<S>,
+    DbPool: FromRef<S>,
     S: Send + Sync,
 {
     type Rejection = (StatusCode, String);
 
     async fn from_request_parts(_parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let pool = PgPool::from_ref(state);
+        let pool = DbPool::from_ref(state);
         let conn = pool.acquire().await.map_err(internal_error)?;
         Ok(Self(conn))
     }
@@ -144,7 +122,6 @@ where
 {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
-
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct CreateTenantRequest {
@@ -211,8 +188,10 @@ impl IntoResponse for HtmlOrRedirect {
     }
 }
 
-async fn post_signin(/*jar: CookieJar, */State(pool): State<PgPool>, Form(signin_form): Form<Signin>) -> HtmlOrRedirect {
-
+async fn post_signin(
+    /*jar: CookieJar, */ State(pool): State<DbPool>,
+    Form(signin_form): Form<Signin>,
+) -> HtmlOrRedirect {
     let signin_response = auth_signin(
         SigninRequest {
             email: signin_form.email,
@@ -236,14 +215,12 @@ async fn post_signin(/*jar: CookieJar, */State(pool): State<PgPool>, Form(signin
     HtmlOrRedirect::Redirect(Redirect::temporary("/dashboard"))
 }
 
-
 async fn get_docs() -> HtmlOrRedirect {
     let mut env = Environment::new();
     env.set_loader(path_loader("static/templates"));
     let tmpl = env.get_template("docs.html.j2").unwrap();
     HtmlOrRedirect::Render(Html(tmpl.render(context!(name => "John")).unwrap()))
 }
-
 
 async fn get_dashboard() -> HtmlOrRedirect {
     // let resp = check_token_within_type(authentificated.token, "auth".to_string(), db).await;
@@ -264,8 +241,8 @@ async fn get_dashboard() -> HtmlOrRedirect {
 }
 
 async fn create_tenant(
+    State(pool): State<DbPool>,
     Json(tenant): Json<CreateTenantRequest>,
-    State(pool): State<PgPool>,
 ) -> Json<CreateTenantResponse> {
     let results = sqlx::query(
         "
@@ -291,14 +268,18 @@ async fn create_tenant(
 
     let results = match results {
         Ok(Some(res)) => res,
-        Ok(None) => return Json(CreateTenantResponse {
-            is_success: false,
-            id: None,
-        }),
-        Err(_) => return Json(CreateTenantResponse {
-            is_success: false,
-            id: None,
-        }),
+        Ok(None) => {
+            return Json(CreateTenantResponse {
+                is_success: false,
+                id: None,
+            })
+        }
+        Err(_) => {
+            return Json(CreateTenantResponse {
+                is_success: false,
+                id: None,
+            })
+        }
     };
     let result_id: Option<Uuid> = Some(results[0]);
     let response = CreateTenantResponse {
@@ -324,7 +305,7 @@ async fn push_event(BufferRequestBody(body): BufferRequestBody) -> String {
             message_code: Some(result.unwrap_err().message_code.to_string()),
         };
         let push_event_response_str = serde_json::to_string(&push_event_response).unwrap();
-        return push_event_response_str
+        return push_event_response_str;
     }
 
     let event = result.unwrap();
@@ -386,14 +367,14 @@ mod test {
         routes_app().await
     }
 
-    #[fixture]
-    pub async fn conn() -> DbConnection {
-        let pool = make_db().await;
-        pool.acquire().await.expect("Error connection")
-    }
+    // #[fixture]
+    // pub async fn conn() -> DbConnection {
+    //     let pool = make_db().await;
+    //     pool.acquire().await.expect("Error connection")
+    // }
 
     #[fixture]
-    pub async fn pool() -> PgPool {
+    pub async fn pool() -> DbPool {
         make_db().await
     }
 
@@ -402,7 +383,14 @@ mod test {
         let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
 
         let response = app
-            .oneshot(Request::builder().method(http::Method::POST).header("Content-Type", "application/x-www-form-urlencoded").uri("/api/manage/v1/create-tenant").body(Body::from(tenant_request_str)).unwrap())
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .header("Content-Type", "application/json")
+                    .uri("/api/manage/v1/create-tenant")
+                    .body(Body::from(tenant_request_str))
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -417,7 +405,8 @@ mod test {
     #[rstest]
     #[tokio::test]
     async fn test_create_tenant(#[future] app: Router<()>) {
-        create_tenant("test-tenant".to_string(), app.await);
+        let tenant_id = create_tenant("test-tenant".to_string(), app.await).await;
+        assert!(tenant_id != Uuid::nil());
     }
 
     #[rstest]
@@ -445,7 +434,14 @@ mod test {
 
         let response = app
             .await
-            .oneshot(Request::builder().method(http::Method::POST).header("Content-Type", "application/json").uri("/api/push/v1/push-event").body(Body::from(push_request_str)).unwrap())
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .header("Content-Type", "application/json")
+                    .uri("/api/push/v1/push-event")
+                    .body(Body::from(push_request_str))
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -463,7 +459,14 @@ mod test {
 
         let response = app
             .await
-            .oneshot(Request::builder().method(http::Method::POST).header("Content-Type", "application/json").uri("/api/push/v1/push-event").body(Body::from(push_request_str)).unwrap())
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .header("Content-Type", "application/json")
+                    .uri("/api/push/v1/push-event")
+                    .body(Body::from(push_request_str))
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -484,7 +487,12 @@ mod test {
     async fn get_root(#[case] s: impl AsRef<str>, #[future] app: Router<()>) {
         let response = app
             .await
-            .oneshot(Request::builder().uri(s.as_ref()).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri(s.as_ref())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -501,7 +509,14 @@ mod test {
 
         let response = app
             .await
-            .oneshot(Request::builder().method(http::Method::POST).header("Content-Type", "application/x-www-form-urlencoded").uri("/signin").body(Body::from(push_request_str)).unwrap())
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .uri("/signin")
+                    .body(Body::from(push_request_str))
+                    .unwrap(),
+            )
             .await
             .unwrap();
 

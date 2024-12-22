@@ -1,21 +1,9 @@
-use crate::{DbConnection, DatabaseConnection, DbPool};
+use crate::DbPool;
 use hex::encode;
 
-use axum::{
-    async_trait,
-    extract::{FromRef, Form, FromRequest, FromRequestParts, State, Request},
-    http::{request::Parts, StatusCode},
-    response::{Html, Redirect, Response, IntoResponse},
-    routing::get, routing::post,
-    Router,
-    Json,
-    body::{Body, Bytes},
-};
-
 use uuid::Uuid;
-use sqlx::postgres::{PgPool, PgPoolOptions};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use rand::Rng;
@@ -140,7 +128,6 @@ pub async fn auth_signin(
     })
 }
 
-
 pub async fn add_account(
     email: String,
     hashed_password: String,
@@ -211,16 +198,15 @@ pub async fn repository_add_auth_token(
     }
 }
 
-async fn add_auth_token(type_: String, account_id: Uuid, pool: &DbPool) -> Result<AuthTokenInserted, AuthError> {
+async fn add_auth_token(
+    type_: String,
+    account_id: Uuid,
+    pool: &DbPool,
+) -> Result<AuthTokenInserted, AuthError> {
     let secret_key = rand::thread_rng().gen::<[u8; 32]>();
     let secure_token = Token::new(encode(account_id).clone(), &secret_key).expect("No token error");
 
-    repository_add_auth_token(
-        secure_token.token.clone(),
-        type_.clone(),
-        account_id,
-        pool,
-    ).await
+    repository_add_auth_token(secure_token.token.clone(), type_.clone(), account_id, pool).await
 }
 
 pub async fn check_token_within_type(
@@ -250,24 +236,17 @@ pub async fn check_token_within_type(
     });
 
     match result {
-        Ok((id, type_)) => Ok(AuthEntity {
-            id,
-            type_,
-        }),
+        Ok((id, type_)) => Ok(AuthEntity { id, type_ }),
         Err(_) => Err(AuthError::InvalidToken),
     }
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;
-    use axum::{
-        body::Body,
-        http::{self, Request, StatusCode},
-    };
-    use rstest::{fixture, rstest};
-    use crate::{make_db, DbConnection};
+
+    use rstest::rstest;
+
     use crate::test::pool;
 
     async fn add_random_email_account(pool: &DbPool) -> AccountInserted {
@@ -289,11 +268,13 @@ mod test {
         let pool = pool.await;
         let account = add_random_email_account(&pool).await;
         let auth_token_type = "auth".to_string();
-        let token_response = add_auth_token(auth_token_type.clone(), account.account_id, &pool).await;
+        let token_response =
+            add_auth_token(auth_token_type.clone(), account.account_id, &pool).await;
         let token = token_response.unwrap().token;
         assert!(!token.is_empty());
 
-        let check_token_response = check_token_within_type(token.clone(), auth_token_type.clone(), &pool).await;
+        let check_token_response =
+            check_token_within_type(token.clone(), auth_token_type.clone(), &pool).await;
 
         assert_eq!(check_token_response.unwrap().id, account.account_id);
     }
@@ -304,11 +285,14 @@ mod test {
         let pool = pool.await;
         let account = add_random_email_account(&pool).await;
         let auth_token_type = "auth".to_string();
-        let token_response = add_auth_token(auth_token_type.clone(), account.account_id, &pool).await;
+        let token_response =
+            add_auth_token(auth_token_type.clone(), account.account_id, &pool).await;
         let token = token_response.unwrap().token;
         assert!(!token.is_empty());
 
-        let check_token_response = check_token_within_type("wrong_token".to_string(), auth_token_type.clone(), &pool).await;
+        let check_token_response =
+            check_token_within_type("wrong_token".to_string(), auth_token_type.clone(), &pool)
+                .await;
 
         assert_eq!(check_token_response.is_err(), true);
     }
@@ -319,11 +303,13 @@ mod test {
         let pool = pool.await;
         let account = add_random_email_account(&pool).await;
         let auth_token_type = "auth".to_string();
-        let token_response = add_auth_token(auth_token_type.clone(), account.account_id, &pool).await;
+        let token_response =
+            add_auth_token(auth_token_type.clone(), account.account_id, &pool).await;
         let token = token_response.unwrap().token;
         assert!(!token.is_empty());
 
-        let check_token_response = check_token_within_type(token.clone(), "wrong_type".to_string(), &pool).await;
+        let check_token_response =
+            check_token_within_type(token.clone(), "wrong_type".to_string(), &pool).await;
 
         assert_eq!(check_token_response.is_err(), true);
     }
