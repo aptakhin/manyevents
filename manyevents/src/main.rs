@@ -9,6 +9,8 @@ use axum::{
     Json, Router,
 };
 
+use axum_extra::extract::cookie::{Cookie, CookieJar};
+
 use http_body_util::BodyExt;
 use minijinja::{context, path_loader, Environment};
 use serde::{Deserialize, Serialize};
@@ -26,7 +28,7 @@ mod auth;
 mod ch;
 mod schema;
 
-use crate::auth::{auth_signin, SigninRequest};
+use crate::auth::{auth_signin, SigninRequest, add_auth_token, check_token_within_type};
 use crate::ch::{insert_smth, ChColumn};
 use crate::schema::read_event_data;
 
@@ -42,42 +44,6 @@ async fn make_db() -> DbPool {
         .connect(&db_connection_str)
         .await
         .expect("can't connect to database")
-}
-
-async fn routes_app() -> Router<()> {
-    let pool = make_db().await;
-
-    let router: Router<()> = Router::new()
-        .route("/", get(get_root))
-        .route("/signin", get(get_signin).post(post_signin))
-        .route("/docs", get(get_docs))
-        .route("/dashboard", get(get_dashboard))
-        .route("/api/push/v1/push-event", post(push_event))
-        .route("/api/manage/v1/create-tenant", post(create_tenant))
-        .route(
-            "/db",
-            get(using_connection_pool_extractor).post(using_connection_extractor),
-        )
-        .with_state(pool);
-
-    router
-}
-
-#[tokio::main]
-async fn main() {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| format!("{}=debug", env!("CARGO_CRATE_NAME")).into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
-
-    let listener = TcpListener::bind("127.0.0.1:8000").await.unwrap();
-    tracing::debug!("listening on {}", listener.local_addr().unwrap());
-
-    let app = routes_app().await;
-    axum::serve(listener, app).await.unwrap();
 }
 
 async fn using_connection_pool_extractor(
@@ -175,23 +141,23 @@ pub struct Signin {
 
 #[derive()]
 pub enum HtmlOrRedirect {
-    Render(Html<String>),
+    Html(Html<String>),
     Redirect(Redirect),
 }
 
 impl IntoResponse for HtmlOrRedirect {
     fn into_response(self) -> Response {
         match self {
-            HtmlOrRedirect::Render(html) => html.into_response(),
+            HtmlOrRedirect::Html(html) => html.into_response(),
             HtmlOrRedirect::Redirect(redirect) => redirect.into_response(),
         }
     }
 }
 
 async fn post_signin(
-    /*jar: CookieJar, */ State(pool): State<DbPool>,
+    jar: CookieJar, State(pool): State<DbPool>,
     Form(signin_form): Form<Signin>,
-) -> HtmlOrRedirect {
+) -> Result<(CookieJar, Redirect), Html<String>> {
     let signin_response = auth_signin(
         SigninRequest {
             email: signin_form.email,
@@ -205,39 +171,62 @@ async fn post_signin(
         let mut env = Environment::new();
         env.set_loader(path_loader("static/templates"));
         let tmpl = env.get_template("signin.html.j2").unwrap();
-        return HtmlOrRedirect::Render(Html(tmpl.render(context!(name => "John")).unwrap()));
+        return Err(Html(tmpl.render(context!(name => "John")).unwrap()));
     }
 
-    // let new_token = "".to_string();
-    // // let auth_token = add_auth_token(new_token.clone(), "auth".to_string(), signin_response.unwrap().account_id, db).await;
-    // cookies.add(("_s".to_string(), new_token));
+    let auth_token = add_auth_token("auth".to_string(), signin_response.unwrap().account_id, &pool).await;
+    let token = auth_token.unwrap().token;
 
-    HtmlOrRedirect::Redirect(Redirect::temporary("/dashboard"))
+    Ok((jar.add(Cookie::new("_s".to_string(), token)), Redirect::to("/dashboard")))
 }
 
 async fn get_docs() -> HtmlOrRedirect {
     let mut env = Environment::new();
     env.set_loader(path_loader("static/templates"));
     let tmpl = env.get_template("docs.html.j2").unwrap();
-    HtmlOrRedirect::Render(Html(tmpl.render(context!(name => "John")).unwrap()))
+    HtmlOrRedirect::Html(Html(tmpl.render(context!(name => "John")).unwrap()))
 }
 
-async fn get_dashboard() -> HtmlOrRedirect {
-    // let resp = check_token_within_type(authentificated.token, "auth".to_string(), db).await;
-    // let check = match resp {
-    //     Ok(auth) => encode(auth.id),
-    //     Err(_) => "Err".to_string(),
-    // };
+#[derive(Debug)]
+struct Authentificated(Uuid);
 
-    // Template::render("dashboard", context! {
-    //     push_token_live: "me-push-live-xxxxxx22222",
-    //     check,
-    // })
+#[async_trait]
+impl<S> FromRequest<S> for Authentificated
+where
+    DbPool: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = StatusCode;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let pool = DbPool::from_ref(state);
+
+        let cookies = CookieJar::from_headers(req.headers());
+
+        let token = cookies.get("_s");
+        println!("Cook {:?}", token);
+        if token.is_none() {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+
+        let cookie_value = token.unwrap().value().to_string();
+        println!("Cook2 {:?}", cookie_value.clone());
+
+        let resp = check_token_within_type(cookie_value, "auth".to_string(), &pool).await;
+
+        match resp {
+            Ok(auth) => Ok(Authentificated(auth.id)),
+            Err(_) => Err(StatusCode::UNAUTHORIZED),
+        }
+    }
+}
+async fn get_dashboard(Authentificated(auth): Authentificated) -> HtmlOrRedirect {
+    let check = auth.clone();
 
     let mut env = Environment::new();
     env.set_loader(path_loader("static/templates"));
     let tmpl = env.get_template("dashboard.html.j2").unwrap();
-    HtmlOrRedirect::Render(Html(tmpl.render(context!(name => "John")).unwrap()))
+    HtmlOrRedirect::Html(Html(tmpl.render(context!(push_token_live => "me-push-live-xxxxxx22222", check)).unwrap()))
 }
 
 async fn create_tenant(
@@ -289,23 +278,16 @@ async fn create_tenant(
     Json(response)
 }
 
-async fn push_event(BufferRequestBody(body): BufferRequestBody) -> String {
-    // tracing::debug!(?body, "handler received body");
-    println!("ask {:?}", body);
-
+async fn push_event(BufferRequestBody(body): BufferRequestBody) -> Json<PushEventResponse> {
     let body_str = std::str::from_utf8(&body).unwrap();
-
     let data: Value = serde_json::from_str(&body_str).unwrap();
-
     let result = read_event_data(&data);
 
     if result.is_err() {
-        let push_event_response = PushEventResponse {
+        return Json(PushEventResponse {
             is_success: false,
             message_code: Some(result.unwrap_err().message_code.to_string()),
-        };
-        let push_event_response_str = serde_json::to_string(&push_event_response).unwrap();
-        return push_event_response_str;
+        });
     }
 
     let event = result.unwrap();
@@ -327,12 +309,10 @@ async fn push_event(BufferRequestBody(body): BufferRequestBody) -> String {
 
     insert_smth("chrs_async_insert".to_string(), columns).await;
 
-    let push_event_response = PushEventResponse {
+    Json(PushEventResponse {
         is_success: true,
         message_code: None,
-    };
-    let push_event_response_str = serde_json::to_string(&push_event_response).unwrap();
-    push_event_response_str
+    })
 }
 
 struct BufferRequestBody(Bytes);
@@ -353,6 +333,42 @@ where
     }
 }
 
+async fn routes_app() -> Router<()> {
+    let pool = make_db().await;
+
+    let router: Router<()> = Router::new()
+        .route("/", get(get_root))
+        .route("/signin", get(get_signin).post(post_signin))
+        .route("/docs", get(get_docs))
+        .route("/dashboard", get(get_dashboard))
+        .route("/api/push/v1/push-event", post(push_event))
+        .route("/api/manage/v1/create-tenant", post(create_tenant))
+        .route(
+            "/db",
+            get(using_connection_pool_extractor).post(using_connection_extractor),
+        )
+        .with_state(pool);
+
+    router
+}
+
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| format!("{}=debug", env!("CARGO_CRATE_NAME")).into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
+    let listener = TcpListener::bind("127.0.0.1:8000").await.unwrap();
+    tracing::debug!("listening on {}", listener.local_addr().unwrap());
+
+    let app = routes_app().await;
+    axum::serve(listener, app).await.unwrap();
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -366,12 +382,6 @@ mod test {
     pub async fn app() -> Router<()> {
         routes_app().await
     }
-
-    // #[fixture]
-    // pub async fn conn() -> DbConnection {
-    //     let pool = make_db().await;
-    //     pool.acquire().await.expect("Error connection")
-    // }
 
     #[fixture]
     pub async fn pool() -> DbPool {
@@ -482,7 +492,6 @@ mod test {
     #[case("/")]
     #[case("/signin")]
     #[case("/docs")]
-    #[case("/dashboard")]
     #[tokio::test]
     async fn get_root(#[case] s: impl AsRef<str>, #[future] app: Router<()>) {
         let response = app
@@ -503,6 +512,24 @@ mod test {
     }
 
     #[rstest]
+    #[case("/dashboard")]
+    #[tokio::test]
+    async fn check_unauthorized(#[case] s: impl AsRef<str>, #[future] app: Router<()>) {
+        let response = app
+            .await
+            .oneshot(
+                Request::builder()
+                    .uri(s.as_ref())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[rstest]
     #[tokio::test]
     async fn test_post_signin_successful_redirect(#[future] app: Router<()>) {
         let push_request_str = r#"email=aaaa&password=xxx"#;
@@ -520,7 +547,7 @@ mod test {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert!(response.headers().contains_key("Location"));
         assert_eq!(response.headers()["Location"], "/dashboard");
     }

@@ -160,7 +160,7 @@ pub async fn add_account(
     }
 }
 
-pub async fn repository_add_auth_token(
+async fn repository_add_auth_token(
     token: String,
     type_: String,
     account_id: Uuid,
@@ -198,7 +198,7 @@ pub async fn repository_add_auth_token(
     }
 }
 
-async fn add_auth_token(
+pub async fn add_auth_token(
     type_: String,
     account_id: Uuid,
     pool: &DbPool,
