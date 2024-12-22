@@ -1,5 +1,28 @@
-#[macro_use]
-extern crate rocket;
+use axum::{
+    async_trait,
+    extract::{FromRef, Form, FromRequestParts, State},
+    http::{request::Parts, StatusCode},
+    response::{Html, Redirect, Response, IntoResponse},
+    routing::get,
+    Router,
+};
+
+use http_body_util::BodyExt;
+use sqlx::postgres::{PgPool, PgPoolOptions};
+use std::time::Duration;
+use tokio::net::TcpListener;
+use tower::util::ServiceExt;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use minijinja::{path_loader, Environment, context};
+use serde::{Deserialize, Serialize};
+use axum_extra::{
+    // TypedHeader,
+    // headers::authorization::{Authorization, Bearer},
+    extract::cookie::{CookieJar, Cookie},
+};
+
+// use sqlx::types::Uuid;
+use uuid::Uuid;
 
 mod auth;
 mod ch;
@@ -7,36 +30,109 @@ mod schema;
 
 use hex::encode;
 
-use rocket::data::{Data, ToByteUnit};
-use rocket::http::{Method::Post, Status, ContentType};
-use rocket_dyn_templates::{context, Template};
-use rocket::http::CookieJar;
-use rocket::data::Capped;
-use rocket::fairing::{self, AdHoc};
-use rocket::form::Form;
-use rocket::response::status::Custom;
-use rocket::response::Redirect;
-use rocket::serde::uuid::Uuid;
-use rocket::{route, Build, Request, Rocket, Route};
-use rocket::request::{self, FromRequest};
-use rocket::outcome::IntoOutcome;
-
-use serde_json::Value;
-
-use rocket::serde::json::Json;
-use rocket::serde::{Deserialize, Serialize};
-use rocket_db_pools::sqlx::{self, Row};
-use rocket_db_pools::{Connection, Database};
-
-use crate::auth::{auth_signin, check_token_within_type, add_auth_token, internal_auth_add_token, internal_auth_add_account, internal_auth_check_token, SigninRequest};
+// use crate::auth::{auth_signin, check_token_within_type, add_auth_token, internal_auth_add_token, internal_auth_add_account, internal_auth_check_token, SigninRequest};
+use crate::auth::{auth_signin, SigninRequest};
 use crate::ch::{insert_smth, ChColumn};
 use crate::schema::read_event_data;
 
-#[derive(Database, Debug, Clone)]
-#[database("postgres")]
-struct Db(sqlx::PgPool);
+async fn make_db() -> PgPool {
+    let db_connection_str = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/manyevents".to_string());
 
-type Result<T, E = rocket::response::Debug<sqlx::Error>> = std::result::Result<T, E>;
+    PgPoolOptions::new()
+        .max_connections(5)
+        .acquire_timeout(Duration::from_secs(3))
+        .connect(&db_connection_str)
+        .await
+        .expect("can't connect to database")
+}
+
+async fn routes_app() -> Router<()> {
+    let pool = make_db().await;
+
+    let router: Router<()> = Router::new()
+        .route("/", get(get_root))
+        .route(
+            "/signin",
+            get(get_signin).post(post_signin),
+        )
+        .route(
+            "/docs",
+            get(get_docs),
+        )
+        .route(
+            "/dashboard",
+            get(get_dashboard),
+        )
+        .route(
+            "/db",
+            get(using_connection_pool_extractor).post(using_connection_extractor),
+        )
+        .with_state(pool);
+
+    router
+}
+
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| format!("{}=debug", env!("CARGO_CRATE_NAME")).into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
+    let listener = TcpListener::bind("127.0.0.1:8000").await.unwrap();
+    tracing::debug!("listening on {}", listener.local_addr().unwrap());
+
+    let app = routes_app().await;
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn using_connection_pool_extractor(
+    State(pool): State<PgPool>,
+) -> Result<String, (StatusCode, String)> {
+    sqlx::query_scalar("select 'hello world from pg'")
+        .fetch_one(&pool)
+        .await
+        .map_err(internal_error)
+}
+
+#[derive(Debug)]
+struct DatabaseConnection(sqlx::pool::PoolConnection<sqlx::Postgres>);
+
+#[async_trait]
+impl<S> FromRequestParts<S> for DatabaseConnection
+where
+    PgPool: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = (StatusCode, String);
+
+    async fn from_request_parts(_parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let pool = PgPool::from_ref(state);
+        let conn = pool.acquire().await.map_err(internal_error)?;
+        Ok(Self(conn))
+    }
+}
+
+async fn using_connection_extractor(
+    DatabaseConnection(mut conn): DatabaseConnection,
+) -> Result<String, (StatusCode, String)> {
+    sqlx::query_scalar("select 'hello world from pg'")
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(internal_error)
+}
+
+fn internal_error<E>(err: E) -> (StatusCode, String)
+where
+    E: std::error::Error,
+{
+    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+}
+
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(crate = "rocket::serde")]
@@ -71,227 +167,114 @@ struct Column {
     value: SerializationType,
 }
 
-fn push_event<'r>(req: &'r Request, data: Data<'r>) -> route::BoxFuture<'r> {
-    Box::pin(async move {
-        let stream = data.open(2.mebibytes());
-        let f = stream.into_string().await.unwrap();
-
-        let capped_data: Capped<String> = f.into();
-        let data: Value = serde_json::from_str(&capped_data).unwrap();
-
-        let result = read_event_data(&data);
-
-        if result.is_err() {
-            let push_event_response = PushEventResponse {
-                is_success: false,
-                message_code: Some(result.unwrap_err().message_code.to_string()),
-            };
-            let push_event_response_str = serde_json::to_string(&push_event_response).unwrap();
-            return route::Outcome::from(req, push_event_response_str);
-        }
-
-        let event = result.unwrap();
-
-        // todo check schema
-
-        let mut columns: Vec<ChColumn> = vec![];
-
-        for unit in event.units.iter() {
-            for value in unit.value.iter() {
-                let column = ChColumn {
-                    name: format!("{}_{}", unit.name, value.name),
-                    value: value.value.clone(),
-                };
-                println!("ins: {}: {:?}", column.name.clone(), value.value.clone());
-                columns.push(column);
-            }
-        }
-
-        insert_smth("chrs_async_insert".to_string(), columns).await;
-
-        let push_event_response = PushEventResponse {
-            is_success: true,
-            message_code: None,
-        };
-        let push_event_response_str = serde_json::to_string(&push_event_response).unwrap();
-        return route::Outcome::from(req, push_event_response_str);
-    })
+async fn get_root() -> Html<String> {
+    let mut env = Environment::new();
+    env.set_loader(path_loader("static/templates"));
+    let tmpl = env.get_template("index.html.j2").unwrap();
+    Html(tmpl.render(context!(name => "John")).unwrap())
 }
 
-#[get("/")]
-async fn get_root() -> Template {
-    Template::render("index", context! { user_name: "Alex" })
+async fn get_signin() -> Html<String> {
+    // Template::render("signin", context! {})
+    let mut env = Environment::new();
+    env.set_loader(path_loader("static/templates"));
+    let tmpl = env.get_template("signin.html.j2").unwrap();
+    Html(tmpl.render(context!(name => "John")).unwrap())
 }
 
-#[get("/signin")]
-async fn get_signin() -> Template {
-    Template::render("signin", context! {})
-}
-
-#[derive(Debug, FromForm)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Signin {
     pub email: String,
     pub password: String,
 }
 
-#[derive(Responder)]
-pub enum TemplateOrRedirect {
-    Template(Template),
+#[derive()]
+pub enum HtmlOrRedirect {
+    Render(Html<String>),
     Redirect(Redirect),
 }
 
-#[post("/signin", data = "<signin_form>")]
-async fn post_signin(signin_form: Form<Signin>, mut db: Connection<Db>, mut cookies: &CookieJar<'_>) -> TemplateOrRedirect {
-    let signin = signin_form.into_inner();
+impl IntoResponse for HtmlOrRedirect {
+    fn into_response(self) -> Response {
+        match self {
+            HtmlOrRedirect::Render(html) => html.into_response(),
+            HtmlOrRedirect::Redirect(redirect) => redirect.into_response(),
+        }
+    }
+}
+
+async fn post_signin(/*jar: CookieJar, */State(pool): State<PgPool>, Form(signin_form): Form<Signin>) -> HtmlOrRedirect {
 
     let signin_response = auth_signin(
         SigninRequest {
-            email: signin.email,
-            password: signin.password,
+            email: signin_form.email,
+            password: signin_form.password,
         },
-        db,
+        pool,
     )
     .await;
 
     if signin_response.is_err() {
-        return TemplateOrRedirect::Template(Template::render(
-            "signin",
-            context! { error: signin_response.unwrap_err() },
-        ));
+        let mut env = Environment::new();
+        env.set_loader(path_loader("static/templates"));
+        let tmpl = env.get_template("signin.html.j2").unwrap();
+        return HtmlOrRedirect::Render(Html(tmpl.render(context!(name => "John")).unwrap()));
     }
 
-    let new_token = "".to_string();
-    // let auth_token = add_auth_token(new_token.clone(), "auth".to_string(), signin_response.unwrap().account_id, db).await;
-    cookies.add(("_s".to_string(), new_token));
 
-    TemplateOrRedirect::Redirect(Redirect::to("/dashboard"))
-}
+    // let new_token = "".to_string();
+    // // let auth_token = add_auth_token(new_token.clone(), "auth".to_string(), signin_response.unwrap().account_id, db).await;
+    // cookies.add(("_s".to_string(), new_token));
 
-#[get("/docs")]
-async fn get_docs() -> Template {
-    Template::render("docs", context! {})
-}
-
-pub struct Authenticated {
-    pub token: String,
+    HtmlOrRedirect::Redirect(Redirect::temporary("/dashboard"))
 }
 
 
-#[rocket::async_trait]
-impl<'r> FromRequest<'r> for Authenticated {
-    type Error = std::convert::Infallible;
-
-    async fn from_request(request: &'r Request<'_>) -> request::Outcome<Self, Self::Error> {
-        request.cookies()
-            .get("Authenticated")
-            .and_then(|c| c.value().parse().ok() )
-            .map(|id| Authenticated { token: id })
-            .or_forward(Status::Unauthorized)
-    }
+async fn get_docs() -> HtmlOrRedirect {
+    let mut env = Environment::new();
+    env.set_loader(path_loader("static/templates"));
+    let tmpl = env.get_template("docs.html.j2").unwrap();
+    HtmlOrRedirect::Render(Html(tmpl.render(context!(name => "John")).unwrap()))
 }
 
-#[get("/dashboard")]
-async fn get_dashboard(authentificated: Authenticated, mut db: Connection<Db>) -> Template {
-    let resp = check_token_within_type(authentificated.token, "auth".to_string(), db).await;
-    let check = match resp {
-        Ok(auth) => encode(auth.id),
-        Err(_) => "Err".to_string(),
-    };
 
-    Template::render("dashboard", context! {
-        push_token_live: "me-push-live-xxxxxx22222",
-        check,
-    })
+async fn get_dashboard() -> HtmlOrRedirect {
+    // let resp = check_token_within_type(authentificated.token, "auth".to_string(), db).await;
+    // let check = match resp {
+    //     Ok(auth) => encode(auth.id),
+    //     Err(_) => "Err".to_string(),
+    // };
+
+    // Template::render("dashboard", context! {
+    //     push_token_live: "me-push-live-xxxxxx22222",
+    //     check,
+    // })
+
+    let mut env = Environment::new();
+    env.set_loader(path_loader("static/templates"));
+    let tmpl = env.get_template("dashboard.html.j2").unwrap();
+    HtmlOrRedirect::Render(Html(tmpl.render(context!(name => "John")).unwrap()))
 }
 
-#[post("/v1/create-tenant", data = "<tenant>")]
-async fn create_tenant(
-    tenant: Json<CreateTenantRequest>,
-    mut db: Connection<Db>,
-) -> Result<Custom<Json<CreateTenantResponse>>> {
-    let results = sqlx::query(
-        "
-        INSERT INTO tenant (title)
-            VALUES ($1)
-            RETURNING id
-        ",
-    )
-    .bind(tenant.title.clone())
-    .fetch_all(&mut **db)
-    .await
-    .and_then(|r| {
-        let processed_result: Vec<Uuid> = r
-            .iter()
-            .map(|row| row.get::<Uuid, _>(0))
-            .collect::<Vec<Uuid>>();
-        Ok(Some(processed_result))
-    })
-    .or_else(|e| {
-        println!("Database query error: {}", e);
-        Err(e)
-    })?;
-
-    let results = match results {
-        Some(res) => res,
-        None => return Err(rocket::response::Debug(sqlx::Error::RowNotFound)),
-    };
-    let result_id: Option<Uuid> = Some(results[0]);
-    let response = CreateTenantResponse {
-        is_success: true,
-        id: result_id,
-    };
-    Ok(Custom(Status::Ok, Json(response)))
-}
-
-async fn run_migrations(rocket: Rocket<Build>) -> fairing::Result {
-    match Db::fetch(&rocket) {
-        Some(db) => match sqlx::migrate!("db/migrations").run(&**db).await {
-            Ok(_) => Ok(rocket),
-            Err(e) => {
-                error!("Failed to initialize SQLx database: {}", e);
-                Err(rocket)
-            }
-        },
-        None => Err(rocket),
-    }
-}
-
-fn rocket() -> Rocket<Build> {
-    let post_push_event = Route::new(Post, "/", push_event);
-    let mut build = rocket::build()
-        .attach(Db::init())
-        .attach(Template::fairing())
-        // Migrations on start will work only during the early development period
-        .attach(AdHoc::try_on_ignite("SQLx Migrations", run_migrations))
-        .mount("/", routes![get_root, get_signin, post_signin, get_docs, get_dashboard])
-        .mount("/api/manage", routes![create_tenant])
-        .mount("/api/push/v1/push-event", vec![post_push_event]);
-
-    // this is internal endpoints added only because of issues to use database in tests
-    // should be disabled for prod
-    if cfg!(debug_assertions) {
-        build = build
-            .mount("/api-internal", routes![internal_auth_add_account, internal_auth_add_token, internal_auth_check_token])
-    }
-    build
-}
-
-#[rocket::main]
-async fn main() -> Result<(), rocket::Error> {
-    let _rocket = rocket().launch().await?;
-    Ok(())
-}
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use rocket::http::Status;
-    use rocket::local::blocking::Client;
+    use axum::{
+        body::Body,
+        http::{self, Request, StatusCode},
+    };
     use rstest::{fixture, rstest};
 
     #[fixture]
-    fn client() -> Client {
-        Client::tracked(rocket()).unwrap()
+    async fn app() -> Router<()> {
+        routes_app().await
+    }
+
+    #[fixture]
+    async fn conn() -> sqlx::pool::PoolConnection<sqlx::Postgres> {
+        let pool = make_db().await;
+        pool.acquire().await.expect("Error connection")
     }
 
     // #[rstest]
@@ -305,108 +288,109 @@ mod test {
     //         .dispatch();
     // }
 
-    fn create_tenant(client: Client, title: String) -> Uuid {
-        let tenant_request = CreateTenantRequest { title: title };
-        let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
+    // fn create_tenant(client: Client, title: String) -> Uuid {
+    //     let tenant_request = CreateTenantRequest { title: title };
+    //     let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
 
-        let response = client
-            .post("/api/manage/v1/create-tenant")
-            .body(tenant_request_str)
-            .dispatch();
+    //     let response = client
+    //         .post("/api/manage/v1/create-tenant")
+    //         .body(tenant_request_str)
+    //         .dispatch();
 
-        assert_eq!(response.status(), Status::Ok);
-        let response_str = response.into_string().unwrap();
-        let topic_response: CreateTenantResponse = serde_json::from_str(&response_str).unwrap();
-        assert_eq!(topic_response.is_success, true);
-        topic_response.id.unwrap()
-    }
+    //     assert_eq!(response.status(), Status::Ok);
+    //     let response_str = response.into_string().unwrap();
+    //     let topic_response: CreateTenantResponse = serde_json::from_str(&response_str).unwrap();
+    //     assert_eq!(topic_response.is_success, true);
+    //     topic_response.id.unwrap()
+    // }
 
-    #[rstest]
-    fn test_create_tenant(client: Client) {
-        create_tenant(client, "test-tenant".to_string());
-    }
+    // #[rstest]
+    // fn test_create_tenant(client: Client) {
+    //     create_tenant(client, "test-tenant".to_string());
+    // }
 
-    #[rstest]
-    fn test_push_event(client: Client) {
-        let push_request_str = r#"{
-            "event": {
-                "units": [
-                    {
-                        "type": "span",
-                        "id": "xxxx",
-                        "start_time": 1234567890,
-                        "end_time": 1234567892
-                    },
-                    {
-                        "type": "base",
-                        "timestamp": 1234567892,
-                        "parent_span_id": "xxxx",
-                        "message": "test message"
-                    }
-                ]
-            }
-        }
-        "#;
+    // #[rstest]
+    // fn test_push_event(client: Client) {
+    //     let push_request_str = r#"{
+    //         "event": {
+    //             "units": [
+    //                 {
+    //                     "type": "span",
+    //                     "id": "xxxx",
+    //                     "start_time": 1234567890,
+    //                     "end_time": 1234567892
+    //                 },
+    //                 {
+    //                     "type": "base",
+    //                     "timestamp": 1234567892,
+    //                     "parent_span_id": "xxxx",
+    //                     "message": "test message"
+    //                 }
+    //             ]
+    //         }
+    //     }
+    //     "#;
 
-        let response = client
-            .post("/api/push/v1/push-event")
-            .body(push_request_str)
-            .dispatch();
+    //     let response = client
+    //         .post("/api/push/v1/push-event")
+    //         .body(push_request_str)
+    //         .dispatch();
 
-        assert_eq!(response.status(), Status::Ok);
-        let response_str = response.into_string().unwrap();
-        let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
-        assert_eq!(push_event_response.is_success, true);
-    }
+    //     assert_eq!(response.status(), Status::Ok);
+    //     let response_str = response.into_string().unwrap();
+    //     let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
+    //     assert_eq!(push_event_response.is_success, true);
+    // }
 
-    #[rstest]
-    fn test_push_event_failed(client: Client) {
-        let push_request_str = r#"{ "event": {} }"#;
+    // #[rstest]
+    // fn test_push_event_failed(client: Client) {
+    //     let push_request_str = r#"{ "event": {} }"#;
 
-        let response = client
-            .post("/api/push/v1/push-event")
-            .body(push_request_str)
-            .dispatch();
+    //     let response = client
+    //         .post("/api/push/v1/push-event")
+    //         .body(push_request_str)
+    //         .dispatch();
 
-        assert_eq!(response.status(), Status::Ok);
-        let response_str = response.into_string().unwrap();
-        let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
-        assert_eq!(push_event_response.is_success, false);
-        assert_eq!(push_event_response.message_code.unwrap(), "invalid_units");
-    }
+    //     assert_eq!(response.status(), Status::Ok);
+    //     let response_str = response.into_string().unwrap();
+    //     let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
+    //     assert_eq!(push_event_response.is_success, false);
+    //     assert_eq!(push_event_response.message_code.unwrap(), "invalid_units");
+    // }
 
     #[rstest]
     #[case("/")]
     #[case("/signin")]
     #[case("/docs")]
-    fn test_get_not_empty_200_response(#[case] s: impl AsRef<str>, client: Client) {
-        let response = client.get(s.as_ref()).dispatch();
+    #[case("/dashboard")]
+    #[tokio::test]
+    async fn get_root(#[case] s: impl AsRef<str>, #[future] app: Router<()>) {
+        let response = app
+            .await
+            .oneshot(Request::builder().uri(s.as_ref()).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
 
-        assert_eq!(response.status(), Status::Ok);
-        let response_str = response.into_string().unwrap();
-        assert!(
-            !response_str.is_empty(),
-            "Response string should not be empty"
-        );
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body_str = std::str::from_utf8(&body).unwrap();
+        assert!(!body_str.is_empty(), "Response string should not be empty");
     }
 
     #[rstest]
-    fn test_post_signin_successful_redirect(client: Client) {
+    #[tokio::test]
+    async fn test_post_signin_successful_redirect(#[future] app: Router<()>) {
         let push_request_str = r#"email=aaaa&password=xxx"#;
 
-        let response = client
-            .post("/signin")
-            .header(ContentType::Form)
-            .body(push_request_str)
-            .dispatch();
+        let response = app
+            .await
+            .oneshot(Request::builder().method(http::Method::POST).header("Content-Type", "application/x-www-form-urlencoded").uri("/signin").body(Body::from(push_request_str)).unwrap())
+            .await
+            .unwrap();
 
-        assert_eq!(response.status(), Status::SeeOther);
-        let location_header = response.headers().get_one("Location");
-        assert!(
-            location_header.is_some(),
-            "Location header should be present"
-        );
-        let redirect_url = location_header.unwrap();
-        assert_eq!(redirect_url, "/dashboard");
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert!(response.headers().contains_key("Location"));
+        assert_eq!(response.headers()["Location"], "/dashboard");
     }
 }

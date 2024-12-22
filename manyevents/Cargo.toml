@@ -11,24 +11,28 @@ tokio = { version = "1", features = ["full"] }
 rocket = { version = "0.5", features = ["json", "uuid"] }
 
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 log = "0.4"
-# utoipa = { version = "5.1.1", features = ["rocket_extras"] }
-# utoipa-swagger-ui = { version = "8.0.1", features = ["rocket"] }
-# utoipa-scalar = { version = "0.2.0", features = ["rocket"] }
-# utoipa-redoc = { version = "5.0.0", features = ["rocket"] }
-# utoipa-rapidoc = { version = "5.0.0", features = ["rocket"] }
 uuid = { version = "1.11.0", features = ["serde", "v4"] }
-sqlx = { version = "0.7", features = ["postgres", "uuid"] }
+
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "any", "postgres", "uuid"] }
 rstest = "0.23.0"
-rocket_db_pools = { version = "0.2.0", features = ["sqlx_postgres"] }
-rocket_dyn_templates = { version = "0.2.0", features = ["minijinja"] }
+serde_json = "1.0.133"
+tower-http = {version = "0.6.2", features = ["trace"]}
+tower = {version = "0.5.2"}
+http-body-util = "0.1.2"
+axum = "0.7.9"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 sha2 = "0.10.8"
 hex = { version = "0.4.3", features = ["serde"] }
 async-std = { version = "1.13.0", features = ["attributes"] }
 hmac = { version = "0.12.1", features = ["std"] }
 rand = "0.8.5"
 base64 = "0.22.1"
+minijinja = { version = "2.5.0", features = ["loader"] }
+axum-extra = { version = "0.9.6", features = ["form", "cookie"] }
 
 [dev-dependencies]
 clickhouse = { version = "0.13.1", features = ["test-util"] }
