@@ -1,11 +1,12 @@
 use axum::{
     async_trait,
-    extract::{FromRef, Form, FromRequestParts, State},
+    extract::{FromRef, Form, FromRequest, FromRequestParts, State, Request},
     http::{request::Parts, StatusCode},
     response::{Html, Redirect, Response, IntoResponse},
-    routing::get,
+    routing::get, routing::post,
     Router,
     Json,
+    body::{Body, Bytes},
 };
 
 use http_body_util::BodyExt;
@@ -16,6 +17,7 @@ use tower::util::ServiceExt;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use minijinja::{path_loader, Environment, context};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use axum_extra::{
     // TypedHeader,
     // headers::authorization::{Authorization, Bearer},
@@ -67,9 +69,14 @@ async fn routes_app() -> Router<()> {
             get(get_dashboard),
         )
         .route(
+            "/api/push/v1/push-event",
+            post(push_event),
+        )
+        .route(
             "/db",
             get(using_connection_pool_extractor).post(using_connection_extractor),
         )
+
         .with_state(pool);
 
     router
@@ -137,7 +144,6 @@ where
 
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(crate = "rocket::serde")]
 struct CreateTenantRequest {
     title: String,
 }
@@ -301,6 +307,71 @@ async fn create_tenant(
     Json(response)
 }
 
+async fn push_event(BufferRequestBody(body): BufferRequestBody) -> String {
+    // tracing::debug!(?body, "handler received body");
+    println!("ask {:?}", body);
+
+    let body_str = std::str::from_utf8(&body).unwrap();
+
+    let data: Value = serde_json::from_str(&body_str).unwrap();
+
+    let result = read_event_data(&data);
+
+    if result.is_err() {
+        let push_event_response = PushEventResponse {
+            is_success: false,
+            message_code: Some(result.unwrap_err().message_code.to_string()),
+        };
+        let push_event_response_str = serde_json::to_string(&push_event_response).unwrap();
+        return push_event_response_str
+    }
+
+    let event = result.unwrap();
+
+    // todo check schema
+
+    let mut columns: Vec<ChColumn> = vec![];
+
+    for unit in event.units.iter() {
+        for value in unit.value.iter() {
+            let column = ChColumn {
+                name: format!("{}_{}", unit.name, value.name),
+                value: value.value.clone(),
+            };
+            println!("ins: {}: {:?}", column.name.clone(), value.value.clone());
+            columns.push(column);
+        }
+    }
+
+    insert_smth("chrs_async_insert".to_string(), columns).await;
+
+    let push_event_response = PushEventResponse {
+        is_success: true,
+        message_code: None,
+    };
+    let push_event_response_str = serde_json::to_string(&push_event_response).unwrap();
+    push_event_response_str
+}
+
+// extractor that shows how to consume the request body upfront
+struct BufferRequestBody(Bytes);
+
+// we must implement `FromRequest` (and not `FromRequestParts`) to consume the body
+#[async_trait]
+impl<S> FromRequest<S> for BufferRequestBody
+where
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let body = Bytes::from_request(req, state)
+            .await
+            .map_err(|err| err.into_response())?;
+
+        Ok(Self(body))
+    }
+}
 
 #[cfg(test)]
 mod test {
@@ -345,54 +416,60 @@ mod test {
         create_tenant("test-tenant".to_string(), app.await);
     }
 
-    // #[rstest]
-    // fn test_push_event(client: Client) {
-    //     let push_request_str = r#"{
-    //         "event": {
-    //             "units": [
-    //                 {
-    //                     "type": "span",
-    //                     "id": "xxxx",
-    //                     "start_time": 1234567890,
-    //                     "end_time": 1234567892
-    //                 },
-    //                 {
-    //                     "type": "base",
-    //                     "timestamp": 1234567892,
-    //                     "parent_span_id": "xxxx",
-    //                     "message": "test message"
-    //                 }
-    //             ]
-    //         }
-    //     }
-    //     "#;
+    #[rstest]
+    #[tokio::test]
+    async fn test_push_event(#[future] app: Router<()>) {
+        let push_request_str = r#"{
+            "event": {
+                "units": [
+                    {
+                        "type": "span",
+                        "id": "xxxx",
+                        "start_time": 1234567890,
+                        "end_time": 1234567892
+                    },
+                    {
+                        "type": "base",
+                        "timestamp": 1234567892,
+                        "parent_span_id": "xxxx",
+                        "message": "test message"
+                    }
+                ]
+            }
+        }
+        "#;
 
-    //     let response = client
-    //         .post("/api/push/v1/push-event")
-    //         .body(push_request_str)
-    //         .dispatch();
+        let response = app
+            .await
+            .oneshot(Request::builder().method(http::Method::POST).header("Content-Type", "application/json").uri("/api/push/v1/push-event").body(Body::from(push_request_str)).unwrap())
+            .await
+            .unwrap();
 
-    //     assert_eq!(response.status(), Status::Ok);
-    //     let response_str = response.into_string().unwrap();
-    //     let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
-    //     assert_eq!(push_event_response.is_success, true);
-    // }
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let response_str = std::str::from_utf8(&body).unwrap();
+        let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
+        assert_eq!(push_event_response.is_success, true);
+    }
 
-    // #[rstest]
-    // fn test_push_event_failed(client: Client) {
-    //     let push_request_str = r#"{ "event": {} }"#;
+    #[rstest]
+    #[tokio::test]
+    async fn test_push_event_failed(#[future] app: Router<()>) {
+        let push_request_str = r#"{ "event": {} }"#;
 
-    //     let response = client
-    //         .post("/api/push/v1/push-event")
-    //         .body(push_request_str)
-    //         .dispatch();
+        let response = app
+            .await
+            .oneshot(Request::builder().method(http::Method::POST).header("Content-Type", "application/json").uri("/api/push/v1/push-event").body(Body::from(push_request_str)).unwrap())
+            .await
+            .unwrap();
 
-    //     assert_eq!(response.status(), Status::Ok);
-    //     let response_str = response.into_string().unwrap();
-    //     let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
-    //     assert_eq!(push_event_response.is_success, false);
-    //     assert_eq!(push_event_response.message_code.unwrap(), "invalid_units");
-    // }
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let response_str = std::str::from_utf8(&body).unwrap();
+        let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
+        assert_eq!(push_event_response.is_success, false);
+        assert_eq!(push_event_response.message_code.unwrap(), "invalid_units");
+    }
 
     #[rstest]
     #[case("/")]
