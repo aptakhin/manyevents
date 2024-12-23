@@ -6,6 +6,21 @@ use uuid::Uuid;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use axum::{
+    async_trait,
+    body::Bytes,
+    extract::{Form, FromRef, FromRequest, FromRequestParts, Request, State},
+    http::{request::Parts, StatusCode},
+    response::{Html, IntoResponse, Redirect, Response},
+    routing::get,
+    routing::post,
+    Json, Router,
+};
+use axum_extra::extract::cookie::{Cookie, CookieJar};
+use axum_extra::{
+    headers::authorization::{Authorization, Bearer},
+    TypedHeader,
+};
 use rand::Rng;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -33,13 +48,13 @@ pub struct AccountInserted {
     pub account_id: Uuid,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct AuthTokenInserted {
     pub token_id: Uuid,
     pub token: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub enum AuthError {
     InvalidToken,
 }
@@ -73,6 +88,71 @@ impl Token {
         Ok(Token {
             token: hash_password(message),
         })
+    }
+}
+
+pub struct AccountInfo {
+    pub account_id: Uuid,
+}
+
+#[derive(Debug)]
+pub struct Authentificated(pub Uuid);
+
+#[async_trait]
+impl<S> FromRequest<S> for Authentificated
+where
+    DbPool: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = StatusCode;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let headers = req.headers();
+
+        let header_token = headers.get("Authorization");
+        println!("header_token {:?}", header_token);
+
+        let cookies = CookieJar::from_headers(headers);
+
+        let cookie_token = cookies.get("_s");
+        println!("Cook {:?}", cookie_token);
+        if header_token.is_none() && cookie_token.is_none() {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+
+        let mut check_token = "".to_string();
+        if cookie_token.is_some() {
+            check_token = cookie_token.unwrap().value().to_string();
+            println!("Cook2 {:?}", check_token.clone());
+        }
+
+        if header_token.is_some() {
+            check_token = header_token.unwrap().to_str().unwrap().to_string();
+            println!("Cook1 {:?}", check_token.clone());
+            if check_token.starts_with("Bearer ") {
+                check_token = check_token.strip_prefix("Bearer ").unwrap().to_string();
+            }
+        }
+
+        let pool = DbPool::from_ref(state);
+        let resp = check_token_within_type(check_token, "auth".to_string(), &pool).await;
+
+        match resp {
+            Ok(auth) => Ok(Authentificated(auth.id)),
+            Err(_) => Err(StatusCode::UNAUTHORIZED),
+        }
+    }
+}
+
+pub async fn ensure_header_authentification(
+    header: TypedHeader<Authorization<Bearer>>,
+    pool: &DbPool,
+) -> Result<Authentificated, AuthError> {
+    let header_token = header.0.token().to_string();
+    let resp = check_token_within_type(header_token, "auth".to_string(), pool).await;
+    match resp {
+        Ok(auth) => Ok(Authentificated(auth.id)),
+        Err(_) => Err(AuthError::InvalidToken),
     }
 }
 
@@ -240,16 +320,10 @@ pub async fn check_token_within_type(
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
     use super::*;
+    use crate::test::{add_random_email_account, pool};
     use rstest::rstest;
-    use crate::test::pool;
-
-    async fn add_random_email_account(pool: &DbPool) -> AccountInserted {
-        let random_email = Uuid::new_v4();
-        let account_inserted = add_account(encode(random_email), "123".to_string(), pool).await;
-        account_inserted.expect("Should be inserted")
-    }
 
     #[rstest]
     #[tokio::test]
@@ -259,7 +333,7 @@ mod test {
         let account_inserted = add_random_email_account(&pool).await;
 
         assert_eq!(account_inserted.is_inserted, true);
-        assert!(account_inserted.account_id.is_some());
+        assert!(account_inserted.account_id != Uuid::nil());
     }
 
     #[rstest]

@@ -12,3 +12,6 @@ testw::
 
 fmt::
 	(cd manyevents && cargo fmt --all)
+
+fix::
+	(cd manyevents && cargo fix)

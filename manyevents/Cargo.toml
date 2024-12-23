@@ -32,7 +32,7 @@ hmac = { version = "0.12.1", features = ["std"] }
 rand = "0.8.5"
 base64 = "0.22.1"
 minijinja = { version = "2.5.0", features = ["loader"] }
-axum-extra = { version = "0.9.6", features = ["form", "cookie"] }
+axum-extra = { version = "0.9.6", features = ["form", "cookie", "typed-header"] }
 
 [dev-dependencies]
 clickhouse = { version = "0.13.1", features = ["test-util"] }

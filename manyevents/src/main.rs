@@ -10,6 +10,10 @@ use axum::{
 };
 
 use axum_extra::extract::cookie::{Cookie, CookieJar};
+use axum_extra::{
+    headers::authorization::{Authorization, Bearer},
+    TypedHeader,
+};
 
 use http_body_util::BodyExt;
 use minijinja::{context, path_loader, Environment};
@@ -28,7 +32,10 @@ mod auth;
 mod ch;
 mod schema;
 
-use crate::auth::{auth_signin, SigninRequest, add_auth_token, check_token_within_type};
+use crate::auth::{
+    add_auth_token, auth_signin, check_token_within_type, ensure_header_authentification,
+    AccountInfo, AuthError, Authentificated, SigninRequest,
+};
 use crate::ch::{insert_smth, ChColumn};
 use crate::schema::read_event_data;
 
@@ -101,6 +108,18 @@ struct CreateTenantResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+struct LinkTenantAccountRequest {
+    tenant_id: Uuid,
+    account_id: Uuid,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct LinkTenantAccountResponse {
+    is_success: bool,
+    message_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct PushEventResponse {
     is_success: bool,
     message_code: Option<String>,
@@ -155,7 +174,8 @@ impl IntoResponse for HtmlOrRedirect {
 }
 
 async fn post_signin(
-    jar: CookieJar, State(pool): State<DbPool>,
+    jar: CookieJar,
+    State(pool): State<DbPool>,
     Form(signin_form): Form<Signin>,
 ) -> Result<(CookieJar, Redirect), Html<String>> {
     let signin_response = auth_signin(
@@ -174,10 +194,18 @@ async fn post_signin(
         return Err(Html(tmpl.render(context!(name => "John")).unwrap()));
     }
 
-    let auth_token = add_auth_token("auth".to_string(), signin_response.unwrap().account_id, &pool).await;
+    let auth_token = add_auth_token(
+        "auth".to_string(),
+        signin_response.unwrap().account_id,
+        &pool,
+    )
+    .await;
     let token = auth_token.unwrap().token;
 
-    Ok((jar.add(Cookie::new("_s".to_string(), token)), Redirect::to("/dashboard")))
+    Ok((
+        jar.add(Cookie::new("_s".to_string(), token)),
+        Redirect::to("/dashboard"),
+    ))
 }
 
 async fn get_docs() -> HtmlOrRedirect {
@@ -187,52 +215,35 @@ async fn get_docs() -> HtmlOrRedirect {
     HtmlOrRedirect::Html(Html(tmpl.render(context!(name => "John")).unwrap()))
 }
 
-#[derive(Debug)]
-struct Authentificated(Uuid);
-
-#[async_trait]
-impl<S> FromRequest<S> for Authentificated
-where
-    DbPool: FromRef<S>,
-    S: Send + Sync,
-{
-    type Rejection = StatusCode;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let pool = DbPool::from_ref(state);
-
-        let cookies = CookieJar::from_headers(req.headers());
-
-        let token = cookies.get("_s");
-        println!("Cook {:?}", token);
-        if token.is_none() {
-            return Err(StatusCode::UNAUTHORIZED);
-        }
-
-        let cookie_value = token.unwrap().value().to_string();
-        println!("Cook2 {:?}", cookie_value.clone());
-
-        let resp = check_token_within_type(cookie_value, "auth".to_string(), &pool).await;
-
-        match resp {
-            Ok(auth) => Ok(Authentificated(auth.id)),
-            Err(_) => Err(StatusCode::UNAUTHORIZED),
-        }
-    }
-}
-async fn get_dashboard(Authentificated(auth): Authentificated) -> HtmlOrRedirect {
+async fn get_dashboard(
+    TypedHeader(auth2): TypedHeader<Authorization<Bearer>>,
+    jar: CookieJar,
+    State(pool): State<DbPool>,
+    Authentificated(auth): Authentificated,
+) -> HtmlOrRedirect {
     let check = auth.clone();
+    println!("auth2 {:?}", auth2.0.token());
 
     let mut env = Environment::new();
     env.set_loader(path_loader("static/templates"));
     let tmpl = env.get_template("dashboard.html.j2").unwrap();
-    HtmlOrRedirect::Html(Html(tmpl.render(context!(push_token_live => "me-push-live-xxxxxx22222", check)).unwrap()))
+    HtmlOrRedirect::Html(Html(
+        tmpl.render(context!(push_token_live => "me-push-live-xxxxxx22222", check))
+            .unwrap(),
+    ))
 }
 
 async fn create_tenant(
+    auth: TypedHeader<Authorization<Bearer>>,
+    // why I can't use? Authentificated(auth2): Authentificated,
     State(pool): State<DbPool>,
     Json(tenant): Json<CreateTenantRequest>,
-) -> Json<CreateTenantResponse> {
+) -> Result<Json<CreateTenantResponse>, StatusCode> {
+    let auth_response = ensure_header_authentification(auth, &pool).await;
+    if auth_response.is_err() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
     let results = sqlx::query(
         "
         INSERT INTO tenant (title)
@@ -258,22 +269,72 @@ async fn create_tenant(
     let results = match results {
         Ok(Some(res)) => res,
         Ok(None) => {
-            return Json(CreateTenantResponse {
+            return Ok(Json(CreateTenantResponse {
                 is_success: false,
                 id: None,
-            })
+            }))
         }
         Err(_) => {
-            return Json(CreateTenantResponse {
+            return Ok(Json(CreateTenantResponse {
                 is_success: false,
                 id: None,
-            })
+            }))
         }
     };
     let result_id: Option<Uuid> = Some(results[0]);
     let response = CreateTenantResponse {
         is_success: true,
         id: result_id,
+    };
+    Ok(Json(response))
+}
+
+async fn link_tenant_account(
+    State(pool): State<DbPool>,
+    Json(link_tenant): Json<LinkTenantAccountRequest>,
+) -> Json<LinkTenantAccountResponse> {
+    let results = sqlx::query(
+        "
+        INSERT INTO tenant_and_account (tenant_id, account_id)
+            VALUES ($1, $2)
+            RETURNING id
+        ",
+    )
+    .bind(link_tenant.tenant_id.clone())
+    .bind(link_tenant.account_id.clone())
+    .fetch_all(&pool)
+    .await
+    .and_then(|r| {
+        let processed_result: Vec<Uuid> = r
+            .iter()
+            .map(|row| row.get::<Uuid, _>(0))
+            .collect::<Vec<Uuid>>();
+        Ok(Some(processed_result))
+    })
+    .or_else(|e| {
+        println!("Database query error: {}", e);
+        Err(e)
+    });
+
+    let results = match results {
+        Ok(Some(res)) => res,
+        Ok(None) => {
+            return Json(LinkTenantAccountResponse {
+                is_success: false,
+                message_code: Some("nana".to_string()),
+            })
+        }
+        Err(_) => {
+            return Json(LinkTenantAccountResponse {
+                is_success: false,
+                message_code: Some("nana".to_string()),
+            })
+        }
+    };
+    let result_id: Option<Uuid> = Some(results[0]);
+    let response = LinkTenantAccountResponse {
+        is_success: true,
+        message_code: None,
     };
     Json(response)
 }
@@ -338,8 +399,8 @@ async fn routes_app() -> Router<()> {
 
     let result = sqlx::migrate!("db/migrations")
         .run(&pool)
-        .await.
-        expect("Migrations panic!");
+        .await
+        .expect("Migrations panic!");
     println!("Migration result {:?}", result);
 
     let router: Router<()> = Router::new()
@@ -349,6 +410,10 @@ async fn routes_app() -> Router<()> {
         .route("/dashboard", get(get_dashboard))
         .route("/api/push/v1/push-event", post(push_event))
         .route("/api/manage/v1/create-tenant", post(create_tenant))
+        .route(
+            "/api/manage/v1/link-tenant-account",
+            post(link_tenant_account),
+        )
         .route(
             "/db",
             get(using_connection_pool_extractor).post(using_connection_extractor),
@@ -376,12 +441,15 @@ async fn main() {
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
     use super::*;
+    use crate::auth::add_account;
+    use crate::auth::AccountInserted;
     use axum::{
         body::Body,
         http::{self, Request, StatusCode},
     };
+    use hex::encode;
     use rstest::{fixture, rstest};
 
     #[fixture]
@@ -394,15 +462,27 @@ mod test {
         make_db().await
     }
 
-    async fn create_tenant(title: String, app: Router<()>) -> Uuid {
+    pub async fn add_random_email_account(pool: &DbPool) -> AccountInserted {
+        let random_email = Uuid::new_v4();
+        let account_inserted = add_account(encode(random_email), "123".to_string(), pool).await;
+        account_inserted.expect("Should be inserted")
+    }
+
+    async fn create_tenant(
+        title: String,
+        bearer: String,
+        app: &Router<()>,
+    ) -> CreateTenantResponse {
         let tenant_request = CreateTenantRequest { title: title };
         let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
 
         let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", bearer))
                     .uri("/api/manage/v1/create-tenant")
                     .body(Body::from(tenant_request_str))
                     .unwrap(),
@@ -415,14 +495,90 @@ mod test {
         let body_str = std::str::from_utf8(&body).unwrap();
         let tenant_response: CreateTenantResponse = serde_json::from_str(&body_str).unwrap();
         assert_eq!(tenant_response.is_success, true);
-        tenant_response.id.unwrap()
+        tenant_response
+    }
+
+    async fn link_tenant_account(
+        tenant_id: Uuid,
+        account_id: Uuid,
+        bearer: String,
+        app: &Router<()>,
+        pool: &DbPool,
+    ) -> LinkTenantAccountResponse {
+        let tenant_request = LinkTenantAccountRequest {
+            tenant_id,
+            account_id,
+        };
+        let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", bearer))
+                    .uri("/api/manage/v1/link-tenant-account")
+                    .body(Body::from(tenant_request_str))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body_str = std::str::from_utf8(&body).unwrap();
+        let tenant_response: LinkTenantAccountResponse = serde_json::from_str(&body_str).unwrap();
+        assert_eq!(tenant_response.is_success, true);
+        tenant_response
     }
 
     #[rstest]
     #[tokio::test]
-    async fn test_create_tenant(#[future] app: Router<()>) {
-        let tenant_id = create_tenant("test-tenant".to_string(), app.await).await;
-        assert!(tenant_id != Uuid::nil());
+    async fn test_create_tenant(#[future] app: Router<()>, #[future] pool: DbPool) {
+        let pool = pool.await;
+        let account = add_random_email_account(&pool).await;
+        let auth_token =
+            add_auth_token("auth".to_string(), account.account_id.clone(), &pool).await;
+
+        let tenant_response = create_tenant(
+            "test-tenant".to_string(),
+            auth_token.unwrap().token,
+            &app.await,
+        )
+        .await;
+
+        assert_eq!(tenant_response.is_success, true);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_link_tenant_account_successful(
+        #[future] app: Router<()>,
+        #[future] pool: DbPool,
+    ) {
+        let pool = pool.await;
+        let app = app.await;
+        let account = add_random_email_account(&pool).await;
+        let auth_token =
+            add_auth_token("auth".to_string(), account.account_id.clone(), &pool).await;
+        let tenant = create_tenant(
+            "test-tenant".to_string(),
+            auth_token.clone().unwrap().token,
+            &app,
+        )
+        .await;
+
+        let link_response = link_tenant_account(
+            tenant.id.expect("Should be a tenant!"),
+            account.account_id,
+            auth_token.unwrap().token,
+            &app,
+            &pool,
+        )
+        .await;
+
+        assert_eq!(link_response.is_success, true);
     }
 
     #[rstest]
@@ -532,7 +688,7 @@ mod test {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[rstest]
