@@ -86,11 +86,7 @@ impl Token {
     }
 }
 
-pub struct AccountInfo {
-    pub account_id: Uuid,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Authentificated(pub Uuid);
 
 #[async_trait]
@@ -148,6 +144,40 @@ pub async fn ensure_header_authentification(
     match resp {
         Ok(auth) => Ok(Authentificated(auth.id)),
         Err(_) => Err(AuthError::InvalidToken),
+    }
+}
+
+pub enum AccountActionOnTenant {
+    CanLinkAccount,
+}
+
+pub async fn ensure_account_permissions_on_tenant(
+    account_id: Uuid,
+    tenant_id: Uuid,
+    action: AccountActionOnTenant,
+    pool: &DbPool,
+) -> Result<(), ()> {
+    let result: Result<(Uuid, Uuid, Uuid), String> = sqlx::query_as(
+        "
+        SELECT id, account_id, tenant_id FROM tenant_and_account
+        WHERE
+            account_id = $1 AND tenant_id = $2
+        ",
+    )
+    .bind(account_id.clone())
+    .bind(tenant_id.clone())
+    .fetch_one(&*pool)
+    .await
+    .and_then(|r| Ok(r))
+    .or_else(|e| {
+        println!("Database query error: {}", e);
+        Err("nooo".to_string())
+    });
+
+    if result.is_ok() {
+        return Ok(());
+    } else {
+        return Err(());
     }
 }
 

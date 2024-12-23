@@ -33,7 +33,8 @@ mod ch;
 mod schema;
 
 use crate::auth::{
-    add_auth_token, auth_signin, ensure_header_authentification, Authentificated, SigninRequest,
+    add_auth_token, auth_signin, ensure_account_permissions_on_tenant,
+    ensure_header_authentification, AccountActionOnTenant, Authentificated, SigninRequest,
 };
 use crate::ch::{insert_smth, ChColumn};
 use crate::schema::read_event_data;
@@ -214,9 +215,7 @@ async fn get_docs() -> HtmlOrRedirect {
     HtmlOrRedirect::Html(Html(tmpl.render(context!(name => "John")).unwrap()))
 }
 
-async fn get_dashboard(
-    Authentificated(auth): Authentificated,
-) -> HtmlOrRedirect {
+async fn get_dashboard(Authentificated(auth): Authentificated) -> HtmlOrRedirect {
     let check = auth.clone();
 
     let mut env = Environment::new();
@@ -239,47 +238,54 @@ async fn create_tenant(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let results = sqlx::query(
+    // Create tenant itself
+    let results: Result<(bool, Uuid), String> = sqlx::query_as(
         "
-        INSERT INTO tenant (title)
-            VALUES ($1)
-            RETURNING id
+        INSERT INTO tenant (title, created_by_account_id)
+            VALUES ($1, $2)
+            RETURNING true, id
         ",
     )
     .bind(tenant.title.clone())
+    .bind(auth_response.clone().unwrap().0)
+    .fetch_one(&pool)
+    .await
+    .and_then(|r| Ok(r))
+    .or_else(|e| {
+        println!("Database query error: {}", e);
+        Err("Failed".to_string())
+    });
+
+    if results.is_err() {
+        return Ok(Json(CreateTenantResponse {
+            is_success: false,
+            id: None,
+        }));
+    }
+
+    let result_id = results.unwrap().1;
+
+    // Create link with created account_id
+    let results_2 = sqlx::query(
+        "
+        INSERT INTO tenant_and_account (tenant_id, account_id)
+            VALUES ($1, $2)
+            RETURNING id
+        ",
+    )
+    .bind(result_id)
+    .bind(auth_response.clone().unwrap().0)
     .fetch_all(&pool)
     .await
-    .and_then(|r| {
-        let processed_result: Vec<Uuid> = r
-            .iter()
-            .map(|row| row.get::<Uuid, _>(0))
-            .collect::<Vec<Uuid>>();
-        Ok(Some(processed_result))
-    })
+    .and_then(|r| Ok(r))
     .or_else(|e| {
         println!("Database query error: {}", e);
         Err(e)
     });
 
-    let results = match results {
-        Ok(Some(res)) => res,
-        Ok(None) => {
-            return Ok(Json(CreateTenantResponse {
-                is_success: false,
-                id: None,
-            }))
-        }
-        Err(_) => {
-            return Ok(Json(CreateTenantResponse {
-                is_success: false,
-                id: None,
-            }))
-        }
-    };
-    let result_id: Option<Uuid> = Some(results[0]);
     let response = CreateTenantResponse {
         is_success: true,
-        id: result_id,
+        id: Some(result_id),
     };
     Ok(Json(response))
 }
@@ -290,6 +296,18 @@ async fn link_tenant_account(
     Json(link_tenant): Json<LinkTenantAccountRequest>,
 ) -> Result<Json<LinkTenantAccountResponse>, StatusCode> {
     let auth_response = ensure_header_authentification(auth, &pool).await;
+    if auth_response.is_err() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let action = AccountActionOnTenant::CanLinkAccount;
+    let auth_response = ensure_account_permissions_on_tenant(
+        auth_response.unwrap().0,
+        link_tenant.tenant_id,
+        action,
+        &pool,
+    )
+    .await;
     if auth_response.is_err() {
         return Err(StatusCode::UNAUTHORIZED);
     }
@@ -556,12 +574,15 @@ pub mod test {
     async fn test_create_tenant_401_bad_token(#[future] app: Router<()>, #[future] pool: DbPool) {
         let pool = pool.await;
 
-        let tenant_request = CreateTenantRequest { title: "test-title".to_string() };
+        let tenant_request = CreateTenantRequest {
+            title: "test-title".to_string(),
+        };
         let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
 
         let bearer = "invalid-token".to_string();
 
-        let response = app.await
+        let response = app
+            .await
             .clone()
             .oneshot(
                 Request::builder()
@@ -621,13 +642,58 @@ pub mod test {
         };
         let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
 
-        let response = app.await
+        let response = app
+            .await
             .clone()
             .oneshot(
                 Request::builder()
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", bearer))
+                    .uri("/api/manage/v1/link-tenant-account")
+                    .body(Body::from(tenant_request_str))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_link_tenant_401_wrong_tenant(#[future] app: Router<()>, #[future] pool: DbPool) {
+        // Create account1 and tenant1, but attempt to give access of user unrelated to tenant
+        let app = app.await;
+        let pool = pool.await;
+
+        let account_1 = add_random_email_account(&pool).await;
+        let auth_token_1 =
+            add_auth_token("auth".to_string(), account_1.account_id.clone(), &pool).await;
+        let tenant_1 = create_tenant(
+            "test-tenant".to_string(),
+            auth_token_1.clone().unwrap().token,
+            &app,
+        )
+        .await;
+        let account_2 = add_random_email_account(&pool).await;
+        let auth_token_2 =
+            add_auth_token("auth".to_string(), account_2.account_id.clone(), &pool).await;
+        let bearer_2 = auth_token_2.unwrap().token;
+
+        let tenant_request = LinkTenantAccountRequest {
+            tenant_id: tenant_1.id.expect("Should be a tenant!"),
+            account_id: account_2.account_id,
+        };
+        let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", bearer_2))
                     .uri("/api/manage/v1/link-tenant-account")
                     .body(Body::from(tenant_request_str))
                     .unwrap(),
