@@ -119,7 +119,7 @@ pub async fn auth_signin(
 
     let (is_inserted, account_id, db_hashed_password) = result.unwrap();
     if hashed_password != db_hashed_password {
-        return Err("Passwords not matching!".to_string());
+        return Err("Passwords are not matching!".to_string());
     }
 
     Ok(SigninResponse {
@@ -187,8 +187,6 @@ async fn repository_add_auth_token(
         Err("nooo".to_string())
     });
 
-    println!("Inserted {:?}/{}/{}", result, token.clone(), type_.clone());
-
     match result {
         Ok((_, id)) => Ok(AuthTokenInserted {
             token_id: id,
@@ -244,9 +242,7 @@ pub async fn check_token_within_type(
 #[cfg(test)]
 mod test {
     use super::*;
-
     use rstest::rstest;
-
     use crate::test::pool;
 
     async fn add_random_email_account(pool: &DbPool) -> AccountInserted {
@@ -259,7 +255,11 @@ mod test {
     #[tokio::test]
     async fn test_add_account(#[future] pool: DbPool) {
         let pool = pool.await;
-        add_random_email_account(&pool).await;
+
+        let account_inserted = add_random_email_account(&pool).await;
+
+        assert_eq!(account_inserted.is_inserted, true);
+        assert!(account_inserted.account_id.is_some());
     }
 
     #[rstest]
