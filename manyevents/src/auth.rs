@@ -8,15 +8,10 @@ use sha2::{Digest, Sha256};
 
 use axum::{
     async_trait,
-    body::Bytes,
-    extract::{Form, FromRef, FromRequest, FromRequestParts, Request, State},
-    http::{request::Parts, StatusCode},
-    response::{Html, IntoResponse, Redirect, Response},
-    routing::get,
-    routing::post,
-    Json, Router,
+    extract::{FromRef, FromRequest, Request},
+    http::StatusCode,
 };
-use axum_extra::extract::cookie::{Cookie, CookieJar};
+use axum_extra::extract::cookie::CookieJar;
 use axum_extra::{
     headers::authorization::{Authorization, Bearer},
     TypedHeader,
