@@ -344,6 +344,75 @@ pub async fn check_token_within_type(
     }
 }
 
+// const auth_type: &'static String = &String::from("auth");
+
+pub struct ApiAuthRepository<'a> {
+    pool: &'a DbPool,
+
+
+}
+
+impl<'a> ApiAuthRepository<'a> {
+    pub async fn check_token(&self, token: String) -> Result<Uuid, String> {
+        let resp = check_token_within_type(token, "auth".to_string(), self.pool).await;
+        match resp {
+            Ok(entity) => Ok(entity.id),
+            Err(_) => Err("invalid_token".to_string())
+        }
+    }
+
+    pub async fn add_token(&self, token: String, account_id: Uuid) -> Result<Uuid, String> {
+        let auth_result = repository_add_auth_token(
+            token,
+            "auth".to_string(),
+            account_id,
+            self.pool,
+        ).await;
+
+        match auth_result {
+            Ok(inserted) => Ok(inserted.token_id),
+            Err(_) => Err("cant_add".to_string())
+        }
+    }
+}
+
+pub struct ApiAuth<'a> {
+    pub account_id: Uuid,
+    token: String,
+    auth_repo: &'a ApiAuthRepository<'a>,
+}
+
+impl<'a> ApiAuth<'a> {
+    pub async fn from(token: String, auth_repo: &'a ApiAuthRepository<'a>) -> Result<ApiAuth, String> {
+        let check_resp = auth_repo.check_token(token.clone()).await;
+        match check_resp {
+            Ok(account_id) => Ok(ApiAuth{ account_id, token, auth_repo} ),
+            Err(_) => Err("invalid_token".to_string())
+        }
+    }
+
+    pub async fn create_new(account_id: Uuid, auth_repo: &'a ApiAuthRepository<'a>) -> Result<ApiAuth, String> {
+        let token = ApiAuth::generate_token(account_id);
+        let auth_result = auth_repo.add_token(token.clone(), account_id).await;
+
+        match auth_result {
+            Ok(account_id) => Ok(ApiAuth{ account_id, token, auth_repo} ),
+            Err(_) => Err("invalid_token".to_string())
+        }
+    }
+
+    pub fn generate_token(account_id: Uuid) -> String {
+        let secret_key = rand::thread_rng().gen::<[u8; 32]>();
+        let secure_token = Token::new(encode(account_id).clone(), &secret_key).expect("No token error");
+        secure_token.token
+    }
+}
+
+pub struct PushAuth {
+    pub tenant_id: Uuid,
+    pub environment_id: Uuid,
+}
+
 #[cfg(test)]
 pub mod test {
     use super::*;
@@ -376,6 +445,22 @@ pub mod test {
             check_token_within_type(token.clone(), auth_token_type.clone(), &pool).await;
 
         assert_eq!(check_token_response.unwrap().id, account.account_id);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_auth_token_successful(#[future] pool: DbPool) {
+        let pool = pool.await;
+        let api_auth_repository = ApiAuthRepository{ pool: &pool };
+        let account = add_random_email_account(&pool).await;
+        let auth = ApiAuth::create_new(account.account_id.clone(), &api_auth_repository).await;
+        let token = auth.unwrap().token;
+        assert!(!token.is_empty());
+
+        let auth = ApiAuth::from(token, &api_auth_repository).await;
+
+        assert!(auth.is_ok());
+        assert_eq!(auth.unwrap().account_id, account.account_id);
     }
 
     #[rstest]
