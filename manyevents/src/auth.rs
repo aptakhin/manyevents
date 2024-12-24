@@ -233,85 +233,6 @@ pub async fn auth_signin(
     })
 }
 
-pub async fn add_account(
-    email: String,
-    hashed_password: String,
-    pool: &DbPool,
-) -> Result<AccountInserted, AuthError> {
-    let result: Result<(bool, Uuid), String> = sqlx::query_as(
-        "
-        INSERT INTO account
-        (email, password)
-        VALUES ($1, $2)
-        RETURNING true, id
-        ",
-    )
-    .bind(email.clone())
-    .bind(hashed_password.clone())
-    .fetch_one(&*pool)
-    .await
-    .and_then(|r| Ok(r))
-    .or_else(|e| {
-        println!("Database query error: {}", e);
-        Err("nooo".to_string())
-    });
-
-    match result {
-        Ok((is_inserted, account_id)) => Ok(AccountInserted {
-            is_inserted,
-            account_id,
-        }),
-        Err(_) => Err(AuthError::InvalidToken),
-    }
-}
-
-async fn repository_add_auth_token(
-    token: String,
-    type_: String,
-    account_id: Uuid,
-    pool: &DbPool,
-) -> Result<AuthTokenInserted, AuthError> {
-    let device_id = "device_id".to_string();
-    let result: Result<(bool, Uuid), String> = sqlx::query_as(
-        "
-        INSERT INTO auth_token
-        (token, type, account_id, device_id)
-        VALUES ($1, $2, $3, $4)
-        RETURNING true, id
-        ",
-    )
-    .bind(token.clone())
-    .bind(type_.clone())
-    .bind(account_id)
-    .bind(device_id.clone())
-    .fetch_one(&*pool)
-    .await
-    .and_then(|r| Ok(r))
-    .or_else(|e| {
-        println!("Database query error: {}", e);
-        Err("nooo".to_string())
-    });
-
-    match result {
-        Ok((_, id)) => Ok(AuthTokenInserted {
-            token_id: id,
-            token,
-        }),
-        Err(_) => Err(AuthError::InvalidToken),
-    }
-}
-
-// pub async fn add_auth_token(
-//     type_: String,
-//     account_id: Uuid,
-//     pool: &DbPool,
-// ) -> Result<AuthTokenInserted, AuthError> {
-//     let secret_key = rand::thread_rng().gen::<[u8; 32]>();
-//     let secure_token = Token::new(encode(account_id).clone(), &secret_key).expect("No token error");
-
-//     repository_add_auth_token(secure_token.token.clone(), type_.clone(), account_id, pool).await
-// }
-
 pub async fn check_token_within_type(
     token: String,
     type_: String,
@@ -397,15 +318,29 @@ pub struct ApiAuthRepository<'a> {
 
 impl<'a> ApiAuthRepository<'a> {
     pub async fn add_token(&self, token: String, account_id: Uuid) -> Result<Uuid, String> {
-        let auth_result = repository_add_auth_token(
-            token,
-            "auth".to_string(),
-            account_id,
-            self.pool,
-        ).await;
+        let device_id = "device_id".to_string();
+        let result: Result<(bool, Uuid), String> = sqlx::query_as(
+            "
+            INSERT INTO auth_token
+            (token, type, account_id, device_id)
+            VALUES ($1, $2, $3, $4)
+            RETURNING true, id
+            ",
+        )
+        .bind(token.clone())
+        .bind("auth")
+        .bind(account_id)
+        .bind(device_id.clone())
+        .fetch_one(self.pool)
+        .await
+        .and_then(|r| Ok(r))
+        .or_else(|e| {
+            println!("Database query error: {}", e);
+            Err("nooo".to_string())
+        });
 
-        match auth_result {
-            Ok(inserted) => Ok(inserted.token_id),
+        match result {
+            Ok((_, id)) => Ok(id),
             Err(_) => Err("cant_add".to_string())
         }
     }
