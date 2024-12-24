@@ -33,11 +33,15 @@ mod ch;
 mod schema;
 
 use crate::auth::{
-    auth_signin, ensure_account_permissions_on_tenant,
-    ensure_header_authentification, AccountActionOnTenant, Authentificated, SigninRequest,
+    ensure_account_permissions_on_tenant,
+    ensure_header_authentification,
+    Account,
+    AccountActionOnTenant,
     // -- new
-    AccountRepository, Account,
-    ApiAuth, ApiAuthRepository,
+    AccountRepository,
+    ApiAuth,
+    ApiAuthRepository,
+    Authentificated,
 };
 use crate::ch::{insert_smth, ChColumn};
 use crate::schema::read_event_data;
@@ -181,14 +185,10 @@ async fn post_signin(
     State(pool): State<DbPool>,
     Form(signin_form): Form<Signin>,
 ) -> Result<(CookieJar, Redirect), Html<String>> {
-    let signin_response = auth_signin(
-        SigninRequest {
-            email: signin_form.email,
-            password: signin_form.password,
-        },
-        &pool,
-    )
-    .await;
+    let account_repository = AccountRepository { pool: &pool };
+    let signin_response = Account::new(&account_repository)
+        .signin(signin_form.email, signin_form.password)
+        .await;
 
     if signin_response.is_err() {
         let mut env = Environment::new();
@@ -197,8 +197,8 @@ async fn post_signin(
         return Err(Html(tmpl.render(context!(name => "John")).unwrap()));
     }
 
-    let api_auth_repository = ApiAuthRepository{ pool: &pool };
-    let auth_token = ApiAuth::create_new(signin_response.unwrap().account_id, &api_auth_repository).await;
+    let api_auth_repository = ApiAuthRepository { pool: &pool };
+    let auth_token = ApiAuth::create_new(signin_response.unwrap(), &api_auth_repository).await;
 
     if auth_token.is_err() {
         // Internal error
@@ -488,10 +488,12 @@ pub mod test {
 
     pub async fn add_random_email_account(pool: &DbPool) -> Uuid {
         let random_email = Uuid::new_v4();
-        let account_repository = AccountRepository{ pool };
+        let account_repository = AccountRepository { pool };
         let account = Account::new(&account_repository);
 
-        let account_inserted = account.add_account(encode(random_email), "123".to_string()).await;
+        let account_inserted = account
+            .signin(encode(random_email), "123".to_string())
+            .await;
 
         account_inserted.expect("Should be inserted")
     }
@@ -566,7 +568,7 @@ pub mod test {
     async fn test_create_tenant_successful(#[future] app: Router<()>, #[future] pool: DbPool) {
         let pool = pool.await;
         let account = add_random_email_account(&pool).await;
-        let api_auth_repository = ApiAuthRepository{ pool: &pool };
+        let api_auth_repository = ApiAuthRepository { pool: &pool };
         let auth_token = ApiAuth::create_new(account, &api_auth_repository).await;
 
         let tenant_response = create_tenant(
@@ -618,14 +620,12 @@ pub mod test {
         let pool = pool.await;
         let app = app.await;
         let account = add_random_email_account(&pool).await;
-        let api_auth_repository = ApiAuthRepository{ pool: &pool };
-        let auth_token = ApiAuth::create_new(account, &api_auth_repository).await.unwrap().token;
-        let tenant = create_tenant(
-            "test-tenant".to_string(),
-            auth_token.clone(),
-            &app,
-        )
-        .await;
+        let api_auth_repository = ApiAuthRepository { pool: &pool };
+        let auth_token = ApiAuth::create_new(account, &api_auth_repository)
+            .await
+            .unwrap()
+            .token;
+        let tenant = create_tenant("test-tenant".to_string(), auth_token.clone(), &app).await;
 
         let link_response = link_tenant_account(
             tenant.id.expect("Should be a tenant!"),
@@ -676,15 +676,11 @@ pub mod test {
         // Create account1 and tenant1, but attempt to give access of user unrelated to tenant
         let app = app.await;
         let pool = pool.await;
-        let api_auth_repository = ApiAuthRepository{ pool: &pool };
+        let api_auth_repository = ApiAuthRepository { pool: &pool };
         let account_1 = add_random_email_account(&pool).await;
         let auth_token_1 = ApiAuth::create_new(account_1, &api_auth_repository).await;
-        let tenant_1 = create_tenant(
-            "test-tenant".to_string(),
-            auth_token_1.unwrap().token,
-            &app,
-        )
-        .await;
+        let tenant_1 =
+            create_tenant("test-tenant".to_string(), auth_token_1.unwrap().token, &app).await;
         let account_2 = add_random_email_account(&pool).await;
         let auth_token_2 = ApiAuth::create_new(account_2, &api_auth_repository).await;
         let bearer_2 = auth_token_2.unwrap().token;

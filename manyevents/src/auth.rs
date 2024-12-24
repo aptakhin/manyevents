@@ -19,34 +19,11 @@ use axum_extra::{
 use rand::Rng;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Deserialize, Debug)]
-pub struct SigninRequest {
-    pub email: String,
-    pub password: String,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct SigninResponse {
-    pub is_inserted: bool,
-    pub account_id: Uuid,
-}
 
 #[derive(Deserialize, Debug)]
 pub struct AuthEntity {
     pub id: Uuid,
     pub type_: String,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct AccountInserted {
-    pub is_inserted: bool,
-    pub account_id: Uuid,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct AuthTokenInserted {
-    pub token_id: Uuid,
-    pub token: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -189,50 +166,6 @@ fn hash_password(password: String) -> String {
     encode(result)
 }
 
-pub async fn auth_signin(
-    signin_request: SigninRequest,
-    pool: &DbPool,
-) -> Result<SigninResponse, String> {
-    let hashed_password = hash_password(signin_request.password.clone());
-    let result: Result<(bool, Uuid, String), String> = sqlx::query_as(
-        "
-        WITH ins AS (
-            INSERT INTO account (email, password)
-            VALUES ($1, $2)
-            ON CONFLICT (email) DO NOTHING
-            RETURNING id, password
-        )
-        SELECT true AS is_inserted, id AS account_id, password FROM ins
-        UNION ALL
-        SELECT false AS is_inserted, id AS account_id, password FROM account WHERE email = $1
-        LIMIT 1
-        ",
-    )
-    .bind(signin_request.email.clone())
-    .bind(hashed_password.clone())
-    .fetch_one(&*pool)
-    .await
-    .and_then(|r| Ok(r))
-    .or_else(|e| {
-        println!("Database query error: {}", e);
-        Err("nooo".to_string())
-    });
-
-    if result.is_err() {
-        return Err("Internal error".to_string());
-    }
-
-    let (is_inserted, account_id, db_hashed_password) = result.unwrap();
-    if hashed_password != db_hashed_password {
-        return Err("Passwords are not matching!".to_string());
-    }
-
-    Ok(SigninResponse {
-        is_inserted,
-        account_id,
-    })
-}
-
 pub async fn check_token_within_type(
     token: String,
     type_: String,
@@ -270,13 +203,19 @@ pub struct AccountRepository<'a> {
 }
 
 impl<'a> AccountRepository<'a> {
-    pub async fn add_account(&self, email: String, hashed_password: String) -> Result<Uuid, String> {
-        let result: Result<(bool, Uuid), String> = sqlx::query_as(
+    pub async fn signin(&self, email: String, hashed_password: String) -> Result<Uuid, String> {
+        let result: Result<(bool, Uuid, String), String> = sqlx::query_as(
             "
-            INSERT INTO account
-            (email, password)
-            VALUES ($1, $2)
-            RETURNING true, id
+            WITH ins AS (
+                INSERT INTO account (email, password)
+                VALUES ($1, $2)
+                ON CONFLICT (email) DO NOTHING
+                RETURNING id, password
+            )
+            SELECT true AS is_inserted, id AS account_id, password FROM ins
+            UNION ALL
+            SELECT false AS is_inserted, id AS account_id, password FROM account WHERE email = $1
+            LIMIT 1
             ",
         )
         .bind(email.clone())
@@ -289,10 +228,16 @@ impl<'a> AccountRepository<'a> {
             Err("nooo".to_string())
         });
 
-        match result {
-            Ok((is_inserted, account_id)) => Ok(account_id),
-            Err(_) => Err("cant_add".to_string())
+        if result.is_err() {
+            return Err("Internal error".to_string());
         }
+
+        let (is_inserted, account_id, db_hashed_password) = result.unwrap();
+        if hashed_password != db_hashed_password {
+            return Err("Passwords are not matching!".to_string());
+        }
+
+        Ok(account_id)
     }
 }
 
@@ -305,12 +250,11 @@ impl<'a> Account<'a> {
         Account { repo }
     }
 
-    pub async fn add_account(&self, email: String, password: String) -> Result<Uuid, String> {
+    pub async fn signin(&self, email: String, password: String) -> Result<Uuid, String> {
         let hashed_password = hash_password(password);
-        self.repo.add_account(email, hashed_password).await
+        self.repo.signin(email, hashed_password).await
     }
 }
-
 
 pub struct ApiAuthRepository<'a> {
     pub pool: &'a DbPool,
@@ -341,7 +285,7 @@ impl<'a> ApiAuthRepository<'a> {
 
         match result {
             Ok((_, id)) => Ok(id),
-            Err(_) => Err("cant_add".to_string())
+            Err(_) => Err("cant_add".to_string()),
         }
     }
 
@@ -349,7 +293,7 @@ impl<'a> ApiAuthRepository<'a> {
         let resp = check_token_within_type(token, "auth".to_string(), self.pool).await;
         match resp {
             Ok(entity) => Ok(entity.id),
-            Err(_) => Err("invalid_token".to_string())
+            Err(_) => Err("invalid_token".to_string()),
         }
     }
 }
@@ -361,26 +305,41 @@ pub struct ApiAuth<'a> {
 }
 
 impl<'a> ApiAuth<'a> {
-    pub async fn from(token: String, auth_repo: &'a ApiAuthRepository<'a>) -> Result<ApiAuth, String> {
+    pub async fn from(
+        token: String,
+        auth_repo: &'a ApiAuthRepository<'a>,
+    ) -> Result<ApiAuth, String> {
         let check_resp = auth_repo.check_token(token.clone()).await;
         match check_resp {
-            Ok(account_id) => Ok(ApiAuth{ account_id, token, auth_repo} ),
-            Err(_) => Err("invalid_token".to_string())
+            Ok(account_id) => Ok(ApiAuth {
+                account_id,
+                token,
+                auth_repo,
+            }),
+            Err(_) => Err("invalid_token".to_string()),
         }
     }
 
-    pub async fn create_new(account_id: Uuid, auth_repo: &'a ApiAuthRepository<'a>) -> Result<ApiAuth, String> {
+    pub async fn create_new(
+        account_id: Uuid,
+        auth_repo: &'a ApiAuthRepository<'a>,
+    ) -> Result<ApiAuth, String> {
         let token = ApiAuth::generate_token(account_id);
         let auth_result = auth_repo.add_token(token.clone(), account_id).await;
         match auth_result {
-            Ok(account_id) => Ok(ApiAuth{ account_id, token, auth_repo} ),
-            Err(_) => Err("invalid_token".to_string())
+            Ok(account_id) => Ok(ApiAuth {
+                account_id,
+                token,
+                auth_repo,
+            }),
+            Err(_) => Err("invalid_token".to_string()),
         }
     }
 
     pub fn generate_token(account_id: Uuid) -> String {
         let secret_key = rand::thread_rng().gen::<[u8; 32]>();
-        let secure_token = Token::new(encode(account_id).clone(), &secret_key).expect("No token error");
+        let secure_token =
+            Token::new(encode(account_id).clone(), &secret_key).expect("No token error");
         secure_token.token
     }
 }
@@ -410,7 +369,7 @@ pub mod test {
     #[tokio::test]
     async fn test_auth_token_successful(#[future] pool: DbPool) {
         let pool = pool.await;
-        let api_auth_repository = ApiAuthRepository{ pool: &pool };
+        let api_auth_repository = ApiAuthRepository { pool: &pool };
         let account = add_random_email_account(&pool).await;
         let auth = ApiAuth::create_new(account, &api_auth_repository).await;
         let token = auth.unwrap().token;
@@ -426,7 +385,7 @@ pub mod test {
     #[tokio::test]
     async fn test_check_auth_token_failed_on_wrong_token(#[future] pool: DbPool) {
         let pool = pool.await;
-        let api_auth_repository = ApiAuthRepository{ pool: &pool };
+        let api_auth_repository = ApiAuthRepository { pool: &pool };
         let account = add_random_email_account(&pool).await;
         let auth = ApiAuth::create_new(account, &api_auth_repository).await;
 
