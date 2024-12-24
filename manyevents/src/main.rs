@@ -31,13 +31,12 @@ use uuid::Uuid;
 mod auth;
 mod ch;
 mod schema;
+mod tenant;
 
 use crate::auth::{
-    ensure_account_permissions_on_tenant,
     ensure_header_authentification,
     Account,
     AccountActionOnTenant,
-    // -- new
     AccountRepository,
     ApiAuth,
     ApiAuthRepository,
@@ -309,14 +308,12 @@ async fn link_tenant_account(
     }
 
     let action = AccountActionOnTenant::CanLinkAccount;
-    let auth_response = ensure_account_permissions_on_tenant(
-        auth_response.unwrap().0,
-        link_tenant.tenant_id,
-        action,
-        &pool,
-    )
-    .await;
-    if auth_response.is_err() {
+    let account_repository = AccountRepository { pool: &pool };
+    let ensure_response = Account::new(&account_repository)
+        .ensure_permissions_on_tenant(auth_response.unwrap().0, link_tenant.tenant_id, action)
+        .await;
+
+    if ensure_response.is_err() {
         return Err(StatusCode::UNAUTHORIZED);
     }
 

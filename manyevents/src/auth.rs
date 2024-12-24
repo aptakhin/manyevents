@@ -103,10 +103,12 @@ where
         }
 
         let pool = DbPool::from_ref(state);
-        let resp = check_token_within_type(check_token, "auth".to_string(), &pool).await;
+
+        let api_auth_repository = ApiAuthRepository { pool: &pool };
+        let resp = ApiAuth::from(check_token, &api_auth_repository).await;
 
         match resp {
-            Ok(auth) => Ok(Authentificated(auth.id)),
+            Ok(auth) => Ok(Authentificated(auth.account_id)),
             Err(_) => Err(StatusCode::UNAUTHORIZED),
         }
     }
@@ -117,9 +119,10 @@ pub async fn ensure_header_authentification(
     pool: &DbPool,
 ) -> Result<Authentificated, AuthError> {
     let header_token = header.0.token().to_string();
-    let resp = check_token_within_type(header_token, "auth".to_string(), pool).await;
+    let api_auth_repository = ApiAuthRepository { pool: pool };
+    let resp = ApiAuth::from(header_token, &api_auth_repository).await;
     match resp {
-        Ok(auth) => Ok(Authentificated(auth.id)),
+        Ok(auth) => Ok(Authentificated(auth.account_id)),
         Err(_) => Err(AuthError::InvalidToken),
     }
 }
@@ -128,74 +131,12 @@ pub enum AccountActionOnTenant {
     CanLinkAccount,
 }
 
-pub async fn ensure_account_permissions_on_tenant(
-    account_id: Uuid,
-    tenant_id: Uuid,
-    action: AccountActionOnTenant,
-    pool: &DbPool,
-) -> Result<(), ()> {
-    let result: Result<(Uuid, Uuid, Uuid), String> = sqlx::query_as(
-        "
-        SELECT id, account_id, tenant_id FROM tenant_and_account
-        WHERE
-            account_id = $1 AND tenant_id = $2
-        ",
-    )
-    .bind(account_id.clone())
-    .bind(tenant_id.clone())
-    .fetch_one(&*pool)
-    .await
-    .and_then(|r| Ok(r))
-    .or_else(|e| {
-        println!("Database query error: {}", e);
-        Err("nooo".to_string())
-    });
-
-    if result.is_ok() {
-        return Ok(());
-    } else {
-        return Err(());
-    }
-}
-
 fn hash_password(password: String) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"unique_per_instance_hash_offset");
     hasher.update(password.as_bytes());
     let result = hasher.finalize();
     encode(result)
-}
-
-pub async fn check_token_within_type(
-    token: String,
-    type_: String,
-    pool: &DbPool,
-) -> Result<AuthEntity, AuthError> {
-    let result: Result<(Uuid, String), String> = sqlx::query_as(
-        "
-        SELECT
-            account_id,
-            type
-        FROM auth_token
-        WHERE
-            token = $1 AND type = $2
-        LIMIT 1
-        ",
-    )
-    .bind(token.clone())
-    .bind(type_)
-    .fetch_one(pool)
-    .await
-    .and_then(|r| Ok(r))
-    .or_else(|e| {
-        println!("Database query error: {}", e);
-        Err("nooo".to_string())
-    });
-
-    match result {
-        Ok((id, type_)) => Ok(AuthEntity { id, type_ }),
-        Err(_) => Err(AuthError::InvalidToken),
-    }
 }
 
 pub struct AccountRepository<'a> {
@@ -239,6 +180,36 @@ impl<'a> AccountRepository<'a> {
 
         Ok(account_id)
     }
+
+    pub async fn ensure_permissions_on_tenant(
+        &self,
+        account_id: Uuid,
+        tenant_id: Uuid,
+        action: AccountActionOnTenant,
+    ) -> Result<(), ()> {
+        let result: Result<(Uuid, Uuid, Uuid), String> = sqlx::query_as(
+            "
+            SELECT id, account_id, tenant_id FROM tenant_and_account
+            WHERE
+                account_id = $1 AND tenant_id = $2
+            ",
+        )
+        .bind(account_id.clone())
+        .bind(tenant_id.clone())
+        .fetch_one(self.pool)
+        .await
+        .and_then(|r| Ok(r))
+        .or_else(|e| {
+            println!("Database query error: {}", e);
+            Err("nooo".to_string())
+        });
+
+        if result.is_ok() {
+            return Ok(());
+        } else {
+            return Err(());
+        }
+    }
 }
 
 pub struct Account<'a> {
@@ -253,6 +224,15 @@ impl<'a> Account<'a> {
     pub async fn signin(&self, email: String, password: String) -> Result<Uuid, String> {
         let hashed_password = hash_password(password);
         self.repo.signin(email, hashed_password).await
+    }
+
+    pub async fn ensure_permissions_on_tenant(
+        &self,
+        account_id: Uuid,
+        tenant_id: Uuid,
+        action: AccountActionOnTenant,
+    ) -> Result<(), ()> {
+        self.repo.ensure_permissions_on_tenant(account_id, tenant_id, action).await
     }
 }
 
@@ -290,9 +270,29 @@ impl<'a> ApiAuthRepository<'a> {
     }
 
     pub async fn check_token(&self, token: String) -> Result<Uuid, String> {
-        let resp = check_token_within_type(token, "auth".to_string(), self.pool).await;
-        match resp {
-            Ok(entity) => Ok(entity.id),
+        let result: Result<(Uuid, String), String> = sqlx::query_as(
+            "
+            SELECT
+                account_id,
+                type
+            FROM auth_token
+            WHERE
+                token = $1 AND type = $2
+            LIMIT 1
+            ",
+        )
+        .bind(token.clone())
+        .bind("auth")
+        .fetch_one(self.pool)
+        .await
+        .and_then(|r| Ok(r))
+        .or_else(|e| {
+            println!("Database query error: {}", e);
+            Err("nooo".to_string())
+        });
+
+        match result {
+            Ok((id, type_)) => Ok(id),
             Err(_) => Err("invalid_token".to_string()),
         }
     }
