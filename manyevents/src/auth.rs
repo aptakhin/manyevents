@@ -301,16 +301,16 @@ async fn repository_add_auth_token(
     }
 }
 
-pub async fn add_auth_token(
-    type_: String,
-    account_id: Uuid,
-    pool: &DbPool,
-) -> Result<AuthTokenInserted, AuthError> {
-    let secret_key = rand::thread_rng().gen::<[u8; 32]>();
-    let secure_token = Token::new(encode(account_id).clone(), &secret_key).expect("No token error");
+// pub async fn add_auth_token(
+//     type_: String,
+//     account_id: Uuid,
+//     pool: &DbPool,
+// ) -> Result<AuthTokenInserted, AuthError> {
+//     let secret_key = rand::thread_rng().gen::<[u8; 32]>();
+//     let secure_token = Token::new(encode(account_id).clone(), &secret_key).expect("No token error");
 
-    repository_add_auth_token(secure_token.token.clone(), type_.clone(), account_id, pool).await
-}
+//     repository_add_auth_token(secure_token.token.clone(), type_.clone(), account_id, pool).await
+// }
 
 pub async fn check_token_within_type(
     token: String,
@@ -344,23 +344,58 @@ pub async fn check_token_within_type(
     }
 }
 
-// const auth_type: &'static String = &String::from("auth");
+pub struct AccountRepository<'a> {
+    pub pool: &'a DbPool,
+}
+
+impl<'a> AccountRepository<'a> {
+    pub async fn add_account(&self, email: String, hashed_password: String) -> Result<Uuid, String> {
+        let result: Result<(bool, Uuid), String> = sqlx::query_as(
+            "
+            INSERT INTO account
+            (email, password)
+            VALUES ($1, $2)
+            RETURNING true, id
+            ",
+        )
+        .bind(email.clone())
+        .bind(hashed_password.clone())
+        .fetch_one(self.pool)
+        .await
+        .and_then(|r| Ok(r))
+        .or_else(|e| {
+            println!("Database query error: {}", e);
+            Err("nooo".to_string())
+        });
+
+        match result {
+            Ok((is_inserted, account_id)) => Ok(account_id),
+            Err(_) => Err("cant_add".to_string())
+        }
+    }
+}
+
+pub struct Account<'a> {
+    repo: &'a AccountRepository<'a>,
+}
+
+impl<'a> Account<'a> {
+    pub fn new(repo: &'a AccountRepository<'a>) -> Account {
+        Account { repo }
+    }
+
+    pub async fn add_account(&self, email: String, password: String) -> Result<Uuid, String> {
+        let hashed_password = hash_password(password);
+        self.repo.add_account(email, hashed_password).await
+    }
+}
+
 
 pub struct ApiAuthRepository<'a> {
-    pool: &'a DbPool,
-
-
+    pub pool: &'a DbPool,
 }
 
 impl<'a> ApiAuthRepository<'a> {
-    pub async fn check_token(&self, token: String) -> Result<Uuid, String> {
-        let resp = check_token_within_type(token, "auth".to_string(), self.pool).await;
-        match resp {
-            Ok(entity) => Ok(entity.id),
-            Err(_) => Err("invalid_token".to_string())
-        }
-    }
-
     pub async fn add_token(&self, token: String, account_id: Uuid) -> Result<Uuid, String> {
         let auth_result = repository_add_auth_token(
             token,
@@ -374,11 +409,19 @@ impl<'a> ApiAuthRepository<'a> {
             Err(_) => Err("cant_add".to_string())
         }
     }
+
+    pub async fn check_token(&self, token: String) -> Result<Uuid, String> {
+        let resp = check_token_within_type(token, "auth".to_string(), self.pool).await;
+        match resp {
+            Ok(entity) => Ok(entity.id),
+            Err(_) => Err("invalid_token".to_string())
+        }
+    }
 }
 
 pub struct ApiAuth<'a> {
     pub account_id: Uuid,
-    token: String,
+    pub token: String,
     auth_repo: &'a ApiAuthRepository<'a>,
 }
 
@@ -394,7 +437,6 @@ impl<'a> ApiAuth<'a> {
     pub async fn create_new(account_id: Uuid, auth_repo: &'a ApiAuthRepository<'a>) -> Result<ApiAuth, String> {
         let token = ApiAuth::generate_token(account_id);
         let auth_result = auth_repo.add_token(token.clone(), account_id).await;
-
         match auth_result {
             Ok(account_id) => Ok(ApiAuth{ account_id, token, auth_repo} ),
             Err(_) => Err("invalid_token".to_string())
@@ -426,25 +468,7 @@ pub mod test {
 
         let account_inserted = add_random_email_account(&pool).await;
 
-        assert_eq!(account_inserted.is_inserted, true);
-        assert!(account_inserted.account_id != Uuid::nil());
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn test_check_auth_token_successful(#[future] pool: DbPool) {
-        let pool = pool.await;
-        let account = add_random_email_account(&pool).await;
-        let auth_token_type = "auth".to_string();
-        let token_response =
-            add_auth_token(auth_token_type.clone(), account.account_id, &pool).await;
-        let token = token_response.unwrap().token;
-        assert!(!token.is_empty());
-
-        let check_token_response =
-            check_token_within_type(token.clone(), auth_token_type.clone(), &pool).await;
-
-        assert_eq!(check_token_response.unwrap().id, account.account_id);
+        assert!(account_inserted != Uuid::nil());
     }
 
     #[rstest]
@@ -453,48 +477,26 @@ pub mod test {
         let pool = pool.await;
         let api_auth_repository = ApiAuthRepository{ pool: &pool };
         let account = add_random_email_account(&pool).await;
-        let auth = ApiAuth::create_new(account.account_id.clone(), &api_auth_repository).await;
+        let auth = ApiAuth::create_new(account, &api_auth_repository).await;
         let token = auth.unwrap().token;
         assert!(!token.is_empty());
 
         let auth = ApiAuth::from(token, &api_auth_repository).await;
 
         assert!(auth.is_ok());
-        assert_eq!(auth.unwrap().account_id, account.account_id);
+        assert_eq!(auth.unwrap().account_id, account);
     }
 
     #[rstest]
     #[tokio::test]
     async fn test_check_auth_token_failed_on_wrong_token(#[future] pool: DbPool) {
         let pool = pool.await;
+        let api_auth_repository = ApiAuthRepository{ pool: &pool };
         let account = add_random_email_account(&pool).await;
-        let auth_token_type = "auth".to_string();
-        let token_response =
-            add_auth_token(auth_token_type.clone(), account.account_id, &pool).await;
-        let token = token_response.unwrap().token;
-        assert!(!token.is_empty());
+        let auth = ApiAuth::create_new(account, &api_auth_repository).await;
 
-        let check_token_response =
-            check_token_within_type("wrong_token".to_string(), auth_token_type.clone(), &pool)
-                .await;
+        let check_auth = ApiAuth::from("wrong_token".to_string(), &api_auth_repository).await;
 
-        assert_eq!(check_token_response.is_err(), true);
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn test_check_auth_token_failed_on_wrong_type(#[future] pool: DbPool) {
-        let pool = pool.await;
-        let account = add_random_email_account(&pool).await;
-        let auth_token_type = "auth".to_string();
-        let token_response =
-            add_auth_token(auth_token_type.clone(), account.account_id, &pool).await;
-        let token = token_response.unwrap().token;
-        assert!(!token.is_empty());
-
-        let check_token_response =
-            check_token_within_type(token.clone(), "wrong_type".to_string(), &pool).await;
-
-        assert_eq!(check_token_response.is_err(), true);
+        assert_eq!(check_auth.is_err(), true);
     }
 }

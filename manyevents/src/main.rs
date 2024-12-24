@@ -33,8 +33,11 @@ mod ch;
 mod schema;
 
 use crate::auth::{
-    add_auth_token, auth_signin, ensure_account_permissions_on_tenant,
+    auth_signin, ensure_account_permissions_on_tenant,
     ensure_header_authentification, AccountActionOnTenant, Authentificated, SigninRequest,
+    // -- new
+    AccountRepository, Account,
+    ApiAuth, ApiAuthRepository,
 };
 use crate::ch::{insert_smth, ChColumn};
 use crate::schema::read_event_data;
@@ -194,12 +197,17 @@ async fn post_signin(
         return Err(Html(tmpl.render(context!(name => "John")).unwrap()));
     }
 
-    let auth_token = add_auth_token(
-        "auth".to_string(),
-        signin_response.unwrap().account_id,
-        &pool,
-    )
-    .await;
+    let api_auth_repository = ApiAuthRepository{ pool: &pool };
+    let auth_token = ApiAuth::create_new(signin_response.unwrap().account_id, &api_auth_repository).await;
+
+    if auth_token.is_err() {
+        // Internal error
+        let mut env = Environment::new();
+        env.set_loader(path_loader("static/templates"));
+        let tmpl = env.get_template("signin.html.j2").unwrap();
+        return Err(Html(tmpl.render(context!(name => "John")).unwrap()));
+    }
+
     let token = auth_token.unwrap().token;
 
     Ok((
@@ -461,8 +469,6 @@ async fn main() {
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use crate::auth::add_account;
-    use crate::auth::AccountInserted;
     use axum::{
         body::Body,
         http::{self, Request, StatusCode},
@@ -480,9 +486,13 @@ pub mod test {
         make_db().await
     }
 
-    pub async fn add_random_email_account(pool: &DbPool) -> AccountInserted {
+    pub async fn add_random_email_account(pool: &DbPool) -> Uuid {
         let random_email = Uuid::new_v4();
-        let account_inserted = add_account(encode(random_email), "123".to_string(), pool).await;
+        let account_repository = AccountRepository{ pool };
+        let account = Account::new(&account_repository);
+
+        let account_inserted = account.add_account(encode(random_email), "123".to_string()).await;
+
         account_inserted.expect("Should be inserted")
     }
 
@@ -556,8 +566,8 @@ pub mod test {
     async fn test_create_tenant_successful(#[future] app: Router<()>, #[future] pool: DbPool) {
         let pool = pool.await;
         let account = add_random_email_account(&pool).await;
-        let auth_token =
-            add_auth_token("auth".to_string(), account.account_id.clone(), &pool).await;
+        let api_auth_repository = ApiAuthRepository{ pool: &pool };
+        let auth_token = ApiAuth::create_new(account, &api_auth_repository).await;
 
         let tenant_response = create_tenant(
             "test-tenant".to_string(),
@@ -608,19 +618,19 @@ pub mod test {
         let pool = pool.await;
         let app = app.await;
         let account = add_random_email_account(&pool).await;
-        let auth_token =
-            add_auth_token("auth".to_string(), account.account_id.clone(), &pool).await;
+        let api_auth_repository = ApiAuthRepository{ pool: &pool };
+        let auth_token = ApiAuth::create_new(account, &api_auth_repository).await.unwrap().token;
         let tenant = create_tenant(
             "test-tenant".to_string(),
-            auth_token.clone().unwrap().token,
+            auth_token.clone(),
             &app,
         )
         .await;
 
         let link_response = link_tenant_account(
             tenant.id.expect("Should be a tenant!"),
-            account.account_id,
-            auth_token.unwrap().token,
+            account,
+            auth_token,
             &app,
             &pool,
         )
@@ -666,24 +676,21 @@ pub mod test {
         // Create account1 and tenant1, but attempt to give access of user unrelated to tenant
         let app = app.await;
         let pool = pool.await;
-
+        let api_auth_repository = ApiAuthRepository{ pool: &pool };
         let account_1 = add_random_email_account(&pool).await;
-        let auth_token_1 =
-            add_auth_token("auth".to_string(), account_1.account_id.clone(), &pool).await;
+        let auth_token_1 = ApiAuth::create_new(account_1, &api_auth_repository).await;
         let tenant_1 = create_tenant(
             "test-tenant".to_string(),
-            auth_token_1.clone().unwrap().token,
+            auth_token_1.unwrap().token,
             &app,
         )
         .await;
         let account_2 = add_random_email_account(&pool).await;
-        let auth_token_2 =
-            add_auth_token("auth".to_string(), account_2.account_id.clone(), &pool).await;
+        let auth_token_2 = ApiAuth::create_new(account_2, &api_auth_repository).await;
         let bearer_2 = auth_token_2.unwrap().token;
-
         let tenant_request = LinkTenantAccountRequest {
             tenant_id: tenant_1.id.expect("Should be a tenant!"),
-            account_id: account_2.account_id,
+            account_id: account_2,
         };
         let tenant_request_str = serde_json::to_string(&tenant_request).unwrap();
 
