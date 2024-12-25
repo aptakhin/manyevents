@@ -146,13 +146,35 @@ pub fn diff_schema(from: JsonSchemaEntity, to: JsonSchemaEntity) -> JsonSchemaDi
     let mut unsupported_change = false;
     let mut changes: Vec<JsonSchemaPropertyDiff> = vec![];
 
-    for (name, property) in &to.properties {
-        println!("{name:?} has {property:?}");
-        changes.push(JsonSchemaPropertyDiff {
-            name: name.to_string(),
-            status: JsonSchemaPropertyStatus::Added("".to_string()),
-            diff: vec![],
-        })
+    for (name, to_property) in &to.properties {
+        println!("{name:?} has {to_property:?}");
+
+        let mut has_change = false;
+        let mut status = JsonSchemaPropertyStatus::Added("".to_string());
+        let mut entry_changes: Vec<JsonSchemaPropertyEntryDiff> = vec![];
+
+        if !from.properties.contains_key(name) {
+            has_change = true;
+        } else {
+            let from_property = from.properties[name].clone();
+            // TODO: need to check all fields in JsonSchemaProperty
+            if to_property.type_ != from_property.type_ {
+                entry_changes.push(JsonSchemaPropertyEntryDiff {
+                    name: "type".to_string(),
+                    status: JsonSchemaPropertyStatus::Changed(from_property.type_.clone(), to_property.type_.clone()),
+                });
+                status = JsonSchemaPropertyStatus::Changed("".to_string(), "".to_string());
+                has_change = true;
+            }
+        }
+
+        if has_change {
+            changes.push(JsonSchemaPropertyDiff {
+                name: name.to_string(),
+                status: status,
+                diff: entry_changes,
+            })
+        }
     }
 
     JsonSchemaDiff {
@@ -194,7 +216,24 @@ pub mod test {
     }
 
     #[rstest]
-    fn diff_entities() {
+    fn diff_entities_same_schema() {
+        let the_same = JsonSchemaEntity {
+            properties: HashMap::from([(
+                "name".to_string(),
+                JsonSchemaProperty {
+                    type_: "string".to_string(),
+                    x_manyevents_ch_type: Some("String".to_string()),
+                },
+            )]),
+        };
+
+        let diff = diff_schema(the_same.clone(), the_same.clone());
+        assert_eq!(diff.unsupported_change, false);
+        assert_eq!(diff.diff.len(), 0);
+    }
+
+    #[rstest]
+    fn diff_entities_new_field() {
         let empty = JsonSchemaEntity {
             properties: HashMap::new(),
         };
@@ -211,6 +250,36 @@ pub mod test {
         let diff = diff_schema(empty, new);
         assert_eq!(diff.unsupported_change, false);
         assert_eq!(diff.diff.len(), 1);
+        let status = diff.diff[0].status.clone();
+        assert!(match status { JsonSchemaPropertyStatus::Added(_) => true, _ => false });
+    }
 
+    #[rstest]
+    fn diff_entities_schema_changed_type() {
+        let old = JsonSchemaEntity {
+            properties: HashMap::from([(
+                "name".to_string(),
+                JsonSchemaProperty {
+                    type_: "string".to_string(),
+                    x_manyevents_ch_type: Some("String".to_string()),
+                },
+            )]),
+        };
+        let new = JsonSchemaEntity {
+            properties: HashMap::from([(
+                "name".to_string(),
+                JsonSchemaProperty {
+                    type_: "integer".to_string(),
+                    x_manyevents_ch_type: Some("String".to_string()),
+                },
+            )]),
+        };
+
+        let diff = diff_schema(old, new);
+        assert_eq!(diff.unsupported_change, false);
+        assert_eq!(diff.diff.len(), 1);
+        assert_eq!(diff.diff[0].name, "name".to_string());
+        let status = diff.diff[0].status.clone();
+        assert!(match status { JsonSchemaPropertyStatus::Changed(_, _) => true, _ => false });
     }
 }
