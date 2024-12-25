@@ -161,7 +161,10 @@ pub fn diff_schema(from: JsonSchemaEntity, to: JsonSchemaEntity) -> JsonSchemaDi
             if to_property.type_ != from_property.type_ {
                 entry_changes.push(JsonSchemaPropertyEntryDiff {
                     name: "type".to_string(),
-                    status: JsonSchemaPropertyStatus::Changed(from_property.type_.clone(), to_property.type_.clone()),
+                    status: JsonSchemaPropertyStatus::Changed(
+                        from_property.type_.clone(),
+                        to_property.type_.clone(),
+                    ),
                 });
                 status = JsonSchemaPropertyStatus::Changed("".to_string(), "".to_string());
                 has_change = true;
@@ -170,7 +173,10 @@ pub fn diff_schema(from: JsonSchemaEntity, to: JsonSchemaEntity) -> JsonSchemaDi
             if to_property.x_manyevents_ch_type != from_property.x_manyevents_ch_type {
                 entry_changes.push(JsonSchemaPropertyEntryDiff {
                     name: "x-manyevents-ch-type".to_string(),
-                    status: JsonSchemaPropertyStatus::Changed(from_property.x_manyevents_ch_type.clone(), to_property.x_manyevents_ch_type.clone()),
+                    status: JsonSchemaPropertyStatus::Changed(
+                        from_property.x_manyevents_ch_type.clone(),
+                        to_property.x_manyevents_ch_type.clone(),
+                    ),
                 });
                 status = JsonSchemaPropertyStatus::Changed("".to_string(), "".to_string());
                 has_change = true;
@@ -192,10 +198,70 @@ pub fn diff_schema(from: JsonSchemaEntity, to: JsonSchemaEntity) -> JsonSchemaDi
     }
 }
 
+pub fn xxx() {
+    use jsonschema::{Retrieve, Uri};
+    use serde_json::{json, Value};
+    use std::{collections::HashMap, sync::Arc};
+
+    struct InMemoryRetriever {
+        schemas: HashMap<String, Value>,
+    }
+
+    impl Retrieve for InMemoryRetriever {
+        fn retrieve(
+            &self,
+            uri: &Uri<&str>,
+        ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+            self.schemas
+                .get(uri.as_str())
+                .cloned()
+                .ok_or_else(|| format!("Schema not found: {uri}").into())
+        }
+    }
+
+    let mut schemas = HashMap::new();
+    schemas.insert(
+        "https://example.com/person.json".to_string(),
+        json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "x-manyevents-ch-type": "String" },
+                "age": { "type": "integer", "x-manyevents-ch-type": "Int32" }
+            },
+            "required": ["name", "age"]
+        }),
+    );
+
+    let retriever = InMemoryRetriever { schemas };
+
+    let schema = json!({
+        "$ref": "https://example.com/person.json"
+    });
+
+    let validator = jsonschema::options()
+        .with_retriever(retriever)
+        .build(&schema)
+        .unwrap();
+
+    assert!(validator.is_valid(&json!({
+        "name": "Alice",
+        "age": 30,
+    })));
+
+    assert!(!validator.is_valid(&json!({
+        "name": "Bob",
+    })));
+}
+
 #[cfg(test)]
 pub mod test {
     use super::*;
     use rstest::{fixture, rstest};
+
+    #[rstest]
+    fn test_json_schema() {
+        xxx()
+    }
 
     #[rstest]
     fn parse_json_schema_successfully() {
@@ -203,7 +269,7 @@ pub mod test {
             "type": "object",
             "properties": {
                 "name": { "type": "string", "x-manyevents-ch-type": "String" },
-                "age": { "type": "integer", "x-manyevents-ch-type": "Int32" }
+                "age": { "type": "integer", "x-manyevents-ch-type": "Int32" },
             },
             "required": ["name", "age"]
         });
@@ -260,7 +326,10 @@ pub mod test {
         assert_eq!(diff.unsupported_change, false);
         assert_eq!(diff.diff.len(), 1);
         let status = diff.diff[0].status.clone();
-        assert!(match status { JsonSchemaPropertyStatus::Added(_) => true, _ => false });
+        assert!(match status {
+            JsonSchemaPropertyStatus::Added(_) => true,
+            _ => false,
+        });
     }
 
     #[rstest]
@@ -289,7 +358,10 @@ pub mod test {
         assert_eq!(diff.diff.len(), 1);
         assert_eq!(diff.diff[0].name, "name".to_string());
         let status = diff.diff[0].status.clone();
-        assert!(match status { JsonSchemaPropertyStatus::Changed(_, _) => true, _ => false });
+        assert!(match status {
+            JsonSchemaPropertyStatus::Changed(_, _) => true,
+            _ => false,
+        });
         assert_eq!(diff.diff[0].diff.len(), 2);
     }
 }

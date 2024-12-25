@@ -3,7 +3,10 @@ use clickhouse::Client;
 use clickhouse::Row;
 use serde::Deserialize;
 
-use crate::schema::{SerializationType, JsonSchemaDiff, JsonSchemaPropertyDiff, JsonSchemaPropertyStatus, JsonSchemaPropertyEntryDiff};
+use crate::schema::{
+    JsonSchemaDiff, JsonSchemaPropertyDiff, JsonSchemaPropertyEntryDiff, JsonSchemaPropertyStatus,
+    SerializationType,
+};
 
 #[derive(Row, Deserialize, Debug)]
 pub struct ChColumn {
@@ -176,19 +179,27 @@ impl ClickHouseRepository {
 
         let table_name = format!("table_{}", millis);
 
-        let raw_query = format!("
+        let raw_query = format!(
+            "
         CREATE TABLE ? (
             {}
         )
         ENGINE = MergeTree
         ORDER BY `name`
         PARTITION BY `name`
-        ", placeholders_str);
+        ",
+            placeholders_str
+        );
 
-        let mut query = self.client.query(raw_query.as_str()).bind(Identifier(table_name.as_str()));
+        let mut query = self
+            .client
+            .query(raw_query.as_str())
+            .bind(Identifier(table_name.as_str()));
 
         for arg in args {
-            query = query.bind(Identifier(arg.0.as_str())).bind(Identifier(arg.1.as_str()));
+            query = query
+                .bind(Identifier(arg.0.as_str()))
+                .bind(Identifier(arg.1.as_str()));
         }
 
         let exec = query.execute().await;
@@ -218,61 +229,6 @@ impl ClickHouseTenantRepository {
 
         ClickHouseTenantRepository { client }
     }
-}
-
-pub fn xxx() {
-    use jsonschema::{Retrieve, Uri};
-    use serde_json::{json, Value};
-    use std::{collections::HashMap, sync::Arc};
-
-    struct InMemoryRetriever {
-        schemas: HashMap<String, Value>,
-    }
-
-    impl Retrieve for InMemoryRetriever {
-        fn retrieve(
-            &self,
-            uri: &Uri<&str>,
-        ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
-            self.schemas
-                .get(uri.as_str())
-                .cloned()
-                .ok_or_else(|| format!("Schema not found: {uri}").into())
-        }
-    }
-
-    let mut schemas = HashMap::new();
-    schemas.insert(
-        "https://example.com/person.json".to_string(),
-        json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string", "x-manyevents-ch-type": "String" },
-                "age": { "type": "integer", "x-manyevents-ch-type": "Int32" }
-            },
-            "required": ["name", "age"]
-        }),
-    );
-
-    let retriever = InMemoryRetriever { schemas };
-
-    let schema = json!({
-        "$ref": "https://example.com/person.json"
-    });
-
-    let validator = jsonschema::options()
-        .with_retriever(retriever)
-        .build(&schema)
-        .unwrap();
-
-    assert!(validator.is_valid(&json!({
-        "name": "Alice",
-        "age": 30,
-    })));
-
-    assert!(!validator.is_valid(&json!({
-        "name": "Bob",
-    })));
 }
 
 #[cfg(test)]
@@ -309,31 +265,24 @@ pub mod test {
     }
 
     #[rstest]
-    fn test_json_schema() {
-        xxx()
-    }
-
-    #[rstest]
     #[tokio::test]
     async fn generate_migration_by_schema_change(#[future] repo: ClickHouseRepository) {
         let schema_diff = JsonSchemaDiff {
             unsupported_change: false,
-            diff: vec![
-                JsonSchemaPropertyDiff {
-                    name: "name".to_string(),
-                    status: JsonSchemaPropertyStatus::Added("".to_string()),
-                    diff: vec![
-                        JsonSchemaPropertyEntryDiff {
-                            name: "type".to_string(),
-                            status: JsonSchemaPropertyStatus::Added("string".to_string()),
-                        },
-                        JsonSchemaPropertyEntryDiff {
-                            name: "x-manyevents-ch-type".to_string(),
-                            status: JsonSchemaPropertyStatus::Added("String".to_string()),
-                        },
-                    ],
-                },
-            ],
+            diff: vec![JsonSchemaPropertyDiff {
+                name: "name".to_string(),
+                status: JsonSchemaPropertyStatus::Added("".to_string()),
+                diff: vec![
+                    JsonSchemaPropertyEntryDiff {
+                        name: "type".to_string(),
+                        status: JsonSchemaPropertyStatus::Added("string".to_string()),
+                    },
+                    JsonSchemaPropertyEntryDiff {
+                        name: "x-manyevents-ch-type".to_string(),
+                        status: JsonSchemaPropertyStatus::Added("String".to_string()),
+                    },
+                ],
+            }],
         };
         let repo = repo.await;
 
