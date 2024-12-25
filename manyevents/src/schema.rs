@@ -108,7 +108,7 @@ struct JsonSchemaProperty {
     pub type_: String,
 
     #[serde(rename = "x-manyevents-ch-type")]
-    pub x_manyevents_ch_type: Option<String>,
+    pub x_manyevents_ch_type: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -166,6 +166,15 @@ pub fn diff_schema(from: JsonSchemaEntity, to: JsonSchemaEntity) -> JsonSchemaDi
                 status = JsonSchemaPropertyStatus::Changed("".to_string(), "".to_string());
                 has_change = true;
             }
+
+            if to_property.x_manyevents_ch_type != from_property.x_manyevents_ch_type {
+                entry_changes.push(JsonSchemaPropertyEntryDiff {
+                    name: "x-manyevents-ch-type".to_string(),
+                    status: JsonSchemaPropertyStatus::Changed(from_property.x_manyevents_ch_type.clone(), to_property.x_manyevents_ch_type.clone()),
+                });
+                status = JsonSchemaPropertyStatus::Changed("".to_string(), "".to_string());
+                has_change = true;
+            }
         }
 
         if has_change {
@@ -206,12 +215,12 @@ pub mod test {
         assert_eq!(entity.properties["name"].type_, "string".to_string());
         assert_eq!(
             entity.properties["name"].x_manyevents_ch_type,
-            Some("String".to_string())
+            "String".to_string()
         );
         assert_eq!(entity.properties["age"].type_, "integer".to_string());
         assert_eq!(
             entity.properties["age"].x_manyevents_ch_type,
-            Some("Int32".to_string())
+            "Int32".to_string()
         );
     }
 
@@ -222,7 +231,7 @@ pub mod test {
                 "name".to_string(),
                 JsonSchemaProperty {
                     type_: "string".to_string(),
-                    x_manyevents_ch_type: Some("String".to_string()),
+                    x_manyevents_ch_type: "String".to_string(),
                 },
             )]),
         };
@@ -242,7 +251,7 @@ pub mod test {
                 "name".to_string(),
                 JsonSchemaProperty {
                     type_: "string".to_string(),
-                    x_manyevents_ch_type: Some("String".to_string()),
+                    x_manyevents_ch_type: "String".to_string(),
                 },
             )]),
         };
@@ -261,7 +270,7 @@ pub mod test {
                 "name".to_string(),
                 JsonSchemaProperty {
                     type_: "string".to_string(),
-                    x_manyevents_ch_type: Some("String".to_string()),
+                    x_manyevents_ch_type: "String".to_string(),
                 },
             )]),
         };
@@ -270,7 +279,7 @@ pub mod test {
                 "name".to_string(),
                 JsonSchemaProperty {
                     type_: "integer".to_string(),
-                    x_manyevents_ch_type: Some("String".to_string()),
+                    x_manyevents_ch_type: "Int64".to_string(),
                 },
             )]),
         };
@@ -281,5 +290,6 @@ pub mod test {
         assert_eq!(diff.diff[0].name, "name".to_string());
         let status = diff.diff[0].status.clone();
         assert!(match status { JsonSchemaPropertyStatus::Changed(_, _) => true, _ => false });
+        assert_eq!(diff.diff[0].diff.len(), 2);
     }
 }
