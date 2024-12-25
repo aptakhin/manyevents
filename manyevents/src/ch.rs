@@ -158,6 +158,7 @@ impl ClickHouseRepository {
         &self,
         table_name: String,
         migration_plan: ChTableMigration,
+        or_replace: bool,
     ) -> Result<(), ()> {
         let mut args: Vec<(String, String)> = vec![];
 
@@ -173,18 +174,19 @@ impl ClickHouseRepository {
                 args.push((name, change_column_type.unwrap()));
             }
         }
-
+        let or_replace_str = if or_replace { "OR REPLACE " } else { "" };
         let placeholders_str = args.iter().map(|_| "? ?").collect::<Vec<_>>().join(", ");
         let raw_query = format!(
         "
-        CREATE TABLE ? (
+        CREATE {}TABLE ? (
             {}
         )
         ENGINE = MergeTree
         ORDER BY ?
         PARTITION BY ?
         ",
-            placeholders_str
+            or_replace_str,
+            placeholders_str,
         );
 
         let mut query = self
@@ -318,23 +320,28 @@ pub fn make_migration_plan(from: JsonSchemaEntity, to: JsonSchemaEntity) -> ChTa
         if !from.properties.contains_key(name) {
             columns.push(ChColumnMigration {
                 name: name.clone(),
-                type_: ChColumnMigrationStatus::Added(to_property.type_.clone()),
+                type_: ChColumnMigrationStatus::Added(to_property.x_manyevents_ch_type.clone()),
             })
         } else {
             let from_property = from.properties[name].clone();
 
-            if to_property.type_ != from_property.type_ {
+            if to_property.x_manyevents_ch_type != from_property.x_manyevents_ch_type {
                 columns.push(ChColumnMigration {
                     name: name.clone(),
-                    type_: ChColumnMigrationStatus::Changed(from_property.type_.clone(), to_property.type_.clone()),
+                    type_: ChColumnMigrationStatus::Changed(from_property.x_manyevents_ch_type.clone(), to_property.x_manyevents_ch_type.clone()),
                 })
             }
         }
     }
 
+    let mut order_by = ChColumnMigrationStatus::NoChange;
+    if from.properties.len() == 0 && to.properties.len() != 0 {
+        order_by = ChColumnMigrationStatus::Added("name".to_string());
+    }
+
     ChTableMigration {
         columns: columns,
-        order_by: ChColumnMigrationStatus::NoChange,
+        order_by: order_by,
     }
 }
 
@@ -406,7 +413,7 @@ pub mod test {
         let repo = repo.await;
 
         let migration = repo
-            .execute_init_migration(unique_table_name, migration_plan)
+            .execute_init_migration(unique_table_name, migration_plan, false)
             .await;
 
         assert!(
@@ -431,7 +438,7 @@ pub mod test {
         };
         let repo = repo.await;
         let migration = repo
-            .execute_init_migration(unique_table_name.clone(), migration_plan)
+            .execute_init_migration(unique_table_name.clone(), migration_plan, false)
             .await;
         assert!(
             migration.is_ok(),

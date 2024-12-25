@@ -18,7 +18,7 @@ use axum_extra::{
 use http_body_util::BodyExt;
 use minijinja::{context, path_loader, Environment};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Row;
 use std::time::Duration;
@@ -39,9 +39,10 @@ use crate::auth::{
     ensure_header_authentification, Account, AccountActionOnTenant, AccountRepository, ApiAuth,
     ApiAuthRepository, Authentificated,
 };
-use crate::ch::{insert_smth, ChColumn};
-use crate::schema::read_event_data;
+use crate::ch::{insert_smth, ChColumn, make_migration_plan, ClickHouseRepository};
+use crate::schema::{read_event_data, JsonSchemaEntity, JsonSchemaProperty};
 use crate::tenant::{Tenant, TenantRepository};
+use std::collections::HashMap;
 
 type DbPool = PgPool;
 
@@ -73,6 +74,11 @@ struct CreateTenantRequest {
 struct CreateTenantResponse {
     is_success: bool,
     id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct MakeMagicRequest {
+    tenant_id: Uuid,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -267,6 +273,62 @@ async fn link_tenant_account(
     Ok(Json(response))
 }
 
+async fn make_magic(
+    auth: TypedHeader<Authorization<Bearer>>,
+    State(pool): State<DbPool>,
+    Json(req): Json<MakeMagicRequest>,
+) -> Result<String, StatusCode> {
+    let auth_response = ensure_header_authentification(auth, &pool).await;
+    if auth_response.is_err() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let by_account_id = auth_response.clone().unwrap().0;
+
+    let action = AccountActionOnTenant::CanLinkAccount;
+    let account_repository = AccountRepository { pool: &pool };
+    let ensure_response = Account::new(&account_repository)
+        .ensure_permissions_on_tenant(by_account_id.clone(), req.tenant_id, action)
+        .await;
+    if ensure_response.is_err() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let repo = ClickHouseRepository::new("clickhouse://...".to_string());
+
+    let empty = JsonSchemaEntity {
+        properties: HashMap::new(),
+    };
+
+    let js = json!({
+        "type": "object",
+        "properties": {
+            "name": { "type": "string", "x-manyevents-ch-type": "String" },
+            "age": { "type": "integer", "x-manyevents-ch-type": "Int32" },
+        },
+        "required": ["name", "age"]
+    });
+    let new: Result<JsonSchemaEntity, _> = serde_json::from_value(js);
+    if new.is_err() {
+        println!("JsonSchemaEntity parser failed {:?}", new);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    let new = new.unwrap();
+
+    let unique_table_name = "table_xd".to_string();
+
+    let migration_plan = make_migration_plan(empty, new);
+    let migration = repo
+        .execute_init_migration(unique_table_name.clone(), migration_plan, true)
+        .await;
+
+    if migration.is_err() {
+        println!("Migration {:?}", migration);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    Ok("xxx".to_string())
+}
+
 async fn push_event(BufferRequestBody(body): BufferRequestBody) -> Json<PushEventResponse> {
     let body_str = std::str::from_utf8(&body).unwrap();
     let data: Value = serde_json::from_str(&body_str).unwrap();
@@ -342,6 +404,7 @@ async fn routes_app() -> Router<()> {
             "/api/manage/v1/link-tenant-account",
             post(link_tenant_account),
         )
+        .route("/api/manage/v1/make-magic", post(make_magic))
         .with_state(pool);
 
     router
@@ -736,5 +799,39 @@ pub mod test {
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert!(response.headers().contains_key("Location"));
         assert_eq!(response.headers()["Location"], "/dashboard");
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_make_magic(#[future] app: Router<()>, #[future] pool: DbPool) {
+        let app = app.await;
+        let pool = pool.await;
+        let api_auth_repository = ApiAuthRepository { pool: &pool };
+        let account = add_random_email_account(&pool).await;
+        let auth_token = ApiAuth::create_new(account, &api_auth_repository).await;
+        let bearer = auth_token.unwrap().token;
+        let tenant =
+            create_tenant("test-tenant".to_string(), bearer.clone(), &app).await;
+
+        let req = MakeMagicRequest{
+            tenant_id: tenant.id.unwrap(),
+        };
+        let request_str = serde_json::to_string(&req).unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", bearer))
+                    .uri("/api/manage/v1/make-magic")
+                    .body(Body::from(request_str))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }
