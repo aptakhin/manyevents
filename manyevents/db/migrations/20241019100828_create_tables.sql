@@ -69,7 +69,7 @@ CREATE TABLE storage_credential (
 
 CREATE TABLE scope_environment (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    scope_id UUID REFERENCES tenant (id),
+    scope_id UUID REFERENCES scope (id),
     storage_credential_id UUID REFERENCES storage_credential (id),
     created_by_account_id UUID REFERENCES account (id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,

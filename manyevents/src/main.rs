@@ -32,6 +32,8 @@ mod auth;
 mod ch;
 mod schema;
 mod tenant;
+mod scope;
+mod proto;
 
 use crate::auth::{
     ensure_header_authentification, Account, AccountActionOnTenant, AccountRepository, ApiAuth,
@@ -207,8 +209,8 @@ async fn create_tenant(
     let by_account_id = auth_response.clone().unwrap().0;
 
     // TODO: wrap TenantRepository into the transaction
-    let tenant_repository = TenantRepository::new(&pool).await;
-    let tenant = Tenant::new(&tenant_repository).await;
+    let tenant_repository = TenantRepository::new(&pool);
+    let tenant = Tenant::new(&tenant_repository);
     let created_tenant_resp = tenant
         .create(tenant_request.title, by_account_id.clone())
         .await;
@@ -249,8 +251,8 @@ async fn link_tenant_account(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let tenant_repository = TenantRepository::new(&pool).await;
-    let tenant = Tenant::new(&tenant_repository).await;
+    let tenant_repository = TenantRepository::new(&pool);
+    let tenant = Tenant::new(&tenant_repository);
     let link_resp = tenant
         .link_account(link_tenant.tenant_id, by_account_id.clone())
         .await;

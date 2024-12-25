@@ -6,7 +6,7 @@ pub struct TenantRepository<'a> {
 }
 
 impl<'a> TenantRepository<'a> {
-    pub async fn new(pool: &'a DbPool) -> TenantRepository {
+    pub fn new(pool: &'a DbPool) -> TenantRepository {
         TenantRepository { pool }
     }
 
@@ -54,7 +54,7 @@ pub struct Tenant<'a> {
 }
 
 impl<'a> Tenant<'a> {
-    pub async fn new(repo: &'a TenantRepository<'a>) -> Tenant {
+    pub fn new(repo: &'a TenantRepository<'a>) -> Tenant {
         Tenant { repo }
     }
 
