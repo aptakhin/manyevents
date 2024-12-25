@@ -97,10 +97,14 @@ impl ClickHouseRepository {
         ClickHouseRepository { client }
     }
 
-    pub async fn create_credential(&self, unique_prefix: String, db_password: String) -> Result<ClickHouseTenantCredential, ()> {
-        let role = format!("{}_admin_role", unique_prefix);
-        let db_name = format!("{}_db", unique_prefix);
-        let db_user = format!("{}_user", unique_prefix);
+    pub async fn create_credential(
+        &self,
+        unique_suffix: String,
+        db_password: String,
+    ) -> Result<ClickHouseTenantCredential, ()> {
+        let role = format!("admin_role_{}", unique_suffix);
+        let db_name = format!("db_{}", unique_suffix);
+        let db_user = format!("user_{}", unique_suffix);
 
         let res_3 = self
             .client
@@ -127,7 +131,14 @@ impl ClickHouseRepository {
             .await;
         println!("CH {:?}", res_4);
 
-        let res = self.client.query("CREATE USER ? IDENTIFIED WITH sha256_password BY ? DEFAULT DATABASE ?").bind(Identifier(db_user.as_str())).bind(db_password.clone()).bind(Identifier(db_name.as_str())).execute().await;
+        let res = self
+            .client
+            .query("CREATE USER ? IDENTIFIED WITH sha256_password BY ? DEFAULT DATABASE ?")
+            .bind(Identifier(db_user.as_str()))
+            .bind(db_password.clone())
+            .bind(Identifier(db_name.as_str()))
+            .execute()
+            .await;
         println!("CH {:?}", res);
 
         Ok(ClickHouseTenantCredential {
@@ -157,6 +168,60 @@ impl ClickHouseTenantRepository {
     }
 }
 
+pub fn xxx() {
+    use jsonschema::{Retrieve, Uri};
+    use serde_json::{json, Value};
+    use std::{collections::HashMap, sync::Arc};
+
+    struct InMemoryRetriever {
+        schemas: HashMap<String, Value>,
+    }
+
+    impl Retrieve for InMemoryRetriever {
+        fn retrieve(
+            &self,
+            uri: &Uri<&str>,
+        ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+            self.schemas
+                .get(uri.as_str())
+                .cloned()
+                .ok_or_else(|| format!("Schema not found: {uri}").into())
+        }
+    }
+
+    let mut schemas = HashMap::new();
+    schemas.insert(
+        "https://example.com/person.json".to_string(),
+        json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "x-manyevents-ch-type": "String" },
+                "age": { "type": "integer", "x-manyevents-ch-type": "Int32" }
+            },
+            "required": ["name", "age"]
+        }),
+    );
+
+    let retriever = InMemoryRetriever { schemas };
+
+    let schema = json!({
+        "$ref": "https://example.com/person.json"
+    });
+
+    let validator = jsonschema::options()
+        .with_retriever(retriever)
+        .build(&schema)
+        .unwrap();
+
+    assert!(validator.is_valid(&json!({
+        "name": "Alice",
+        "age": 30,
+    })));
+
+    assert!(!validator.is_valid(&json!({
+        "name": "Bob",
+    })));
+}
 
 #[cfg(test)]
 pub mod test {
@@ -178,7 +243,9 @@ pub mod test {
     async fn test_create_credential(#[future] repo: ClickHouseRepository) {
         let repo = repo.await;
 
-        let cred = repo.create_credential("abc2".to_string(), "my_password".to_string()).await;
+        let cred = repo
+            .create_credential("abc2".to_string(), "my_password".to_string())
+            .await;
 
         assert!(cred.is_ok());
         let cred = cred.unwrap();
@@ -187,5 +254,10 @@ pub mod test {
         let res = tenant_repo.client.query("select 'hleoo'").execute().await;
         println!("CY {:?}", res);
         assert!(res.is_ok());
+    }
+
+    #[rstest]
+    async fn test_json_schema() {
+        xxx()
     }
 }

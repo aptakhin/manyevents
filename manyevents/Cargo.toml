@@ -33,6 +33,7 @@ rand = "0.8.5"
 base64 = "0.22.1"
 minijinja = { version = "2.5.0", features = ["loader"] }
 axum-extra = { version = "0.9.6", features = ["form", "cookie", "typed-header"] }
+jsonschema = { version = "0.27.1", default-features = false }
 
 [dev-dependencies]
 clickhouse = { version = "0.13.1", features = ["test-util"] }

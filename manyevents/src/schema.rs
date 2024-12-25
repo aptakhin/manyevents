@@ -1,4 +1,5 @@
-use serde_json::Value;
+use serde_json::{json, Value};
+use std::collections::HashMap;
 
 use rocket::serde::{Deserialize, Serialize};
 
@@ -99,4 +100,117 @@ pub fn read_event_data(event_root: &Value) -> Result<Event, EventError> {
     }
 
     return Ok(Event { units: fill_units });
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct JsonSchemaProperty {
+    #[serde(rename = "type")]
+    pub type_: String,
+
+    #[serde(rename = "x-manyevents-ch-type")]
+    pub x_manyevents_ch_type: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct JsonSchemaEntity {
+    pub properties: HashMap<String, JsonSchemaProperty>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+enum JsonSchemaPropertyStatus {
+    Added(String),
+    Changed(String, String),
+    Removed(String),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct JsonSchemaPropertyEntryDiff {
+    pub name: String,
+    pub status: JsonSchemaPropertyStatus,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct JsonSchemaPropertyDiff {
+    pub name: String,
+    pub status: JsonSchemaPropertyStatus,
+    pub diff: Vec<JsonSchemaPropertyEntryDiff>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct JsonSchemaDiff {
+    pub diff: Vec<JsonSchemaPropertyDiff>,
+    pub unsupported_change: bool,
+}
+
+pub fn diff_schema(from: JsonSchemaEntity, to: JsonSchemaEntity) -> JsonSchemaDiff {
+    let mut unsupported_change = false;
+    let mut changes: Vec<JsonSchemaPropertyDiff> = vec![];
+
+    for (name, property) in &to.properties {
+        println!("{name:?} has {property:?}");
+        changes.push(JsonSchemaPropertyDiff {
+            name: name.to_string(),
+            status: JsonSchemaPropertyStatus::Added("".to_string()),
+            diff: vec![],
+        })
+    }
+
+    JsonSchemaDiff {
+        diff: changes,
+        unsupported_change,
+    }
+}
+
+#[cfg(test)]
+pub mod test {
+    use super::*;
+    use rstest::{fixture, rstest};
+
+    #[rstest]
+    fn parse_json_schema_successfully() {
+        let js = json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "x-manyevents-ch-type": "String" },
+                "age": { "type": "integer", "x-manyevents-ch-type": "Int32" }
+            },
+            "required": ["name", "age"]
+        });
+
+        let entity: Result<JsonSchemaEntity, _> = serde_json::from_value(js);
+
+        assert!(entity.is_ok());
+        let entity = entity.unwrap();
+        assert_eq!(entity.properties["name"].type_, "string".to_string());
+        assert_eq!(
+            entity.properties["name"].x_manyevents_ch_type,
+            Some("String".to_string())
+        );
+        assert_eq!(entity.properties["age"].type_, "integer".to_string());
+        assert_eq!(
+            entity.properties["age"].x_manyevents_ch_type,
+            Some("Int32".to_string())
+        );
+    }
+
+    #[rstest]
+    fn diff_entities() {
+        let empty = JsonSchemaEntity {
+            properties: HashMap::new(),
+        };
+        let new = JsonSchemaEntity {
+            properties: HashMap::from([(
+                "name".to_string(),
+                JsonSchemaProperty {
+                    type_: "string".to_string(),
+                    x_manyevents_ch_type: Some("String".to_string()),
+                },
+            )]),
+        };
+
+        let diff = diff_schema(empty, new);
+        assert_eq!(diff.unsupported_change, false);
+        assert_eq!(diff.diff.len(), 1);
+
+    }
 }
