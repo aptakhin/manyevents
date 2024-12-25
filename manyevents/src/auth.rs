@@ -19,7 +19,6 @@ use axum_extra::{
 use rand::Rng;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-
 #[derive(Deserialize, Debug)]
 pub struct AuthEntity {
     pub id: Uuid,
@@ -232,7 +231,9 @@ impl<'a> Account<'a> {
         tenant_id: Uuid,
         action: AccountActionOnTenant,
     ) -> Result<(), ()> {
-        self.repo.ensure_permissions_on_tenant(account_id, tenant_id, action).await
+        self.repo
+            .ensure_permissions_on_tenant(account_id, tenant_id, action)
+            .await
     }
 }
 

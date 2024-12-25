@@ -1,5 +1,4 @@
-use crate::{DbPool};
-use hex::encode;
+use crate::DbPool;
 use uuid::Uuid;
 
 pub struct TenantRepository<'a> {
@@ -8,7 +7,7 @@ pub struct TenantRepository<'a> {
 
 impl<'a> TenantRepository<'a> {
     pub async fn new(pool: &'a DbPool) -> TenantRepository {
-        TenantRepository{ pool }
+        TenantRepository { pool }
     }
 
     pub async fn create(&self, title: String, by_account_id: Uuid) -> Result<Uuid, ()> {
@@ -42,9 +41,7 @@ impl<'a> TenantRepository<'a> {
         .bind(account_id.clone())
         .fetch_one(self.pool)
         .await
-        .and_then(|r: (Uuid,)| {
-            Ok(r.0)
-        })
+        .and_then(|r: (Uuid,)| Ok(r.0))
         .or_else(|e| {
             println!("Database query error: {}", e);
             Err(())
@@ -58,7 +55,7 @@ pub struct Tenant<'a> {
 
 impl<'a> Tenant<'a> {
     pub async fn new(repo: &'a TenantRepository<'a>) -> Tenant {
-        Tenant{ repo }
+        Tenant { repo }
     }
 
     pub async fn create(&self, title: String, by_account_id: Uuid) -> Result<Uuid, ()> {

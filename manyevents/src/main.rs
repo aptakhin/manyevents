@@ -34,20 +34,12 @@ mod schema;
 mod tenant;
 
 use crate::auth::{
-    ensure_header_authentification,
-    Account,
-    AccountActionOnTenant,
-    AccountRepository,
-    ApiAuth,
-    ApiAuthRepository,
-    Authentificated,
-};
-use crate::tenant::{
-    TenantRepository,
-    Tenant,
+    ensure_header_authentification, Account, AccountActionOnTenant, AccountRepository, ApiAuth,
+    ApiAuthRepository, Authentificated,
 };
 use crate::ch::{insert_smth, ChColumn};
 use crate::schema::read_event_data;
+use crate::tenant::{Tenant, TenantRepository};
 
 type DbPool = PgPool;
 
@@ -217,11 +209,15 @@ async fn create_tenant(
     // TODO: wrap TenantRepository into the transaction
     let tenant_repository = TenantRepository::new(&pool).await;
     let tenant = Tenant::new(&tenant_repository).await;
-    let created_tenant_resp = tenant.create(tenant_request.title, by_account_id.clone()).await;
+    let created_tenant_resp = tenant
+        .create(tenant_request.title, by_account_id.clone())
+        .await;
     if created_tenant_resp.is_err() {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
-    let link_resp = tenant.link_account(created_tenant_resp.clone().unwrap(), by_account_id.clone()).await;
+    let link_resp = tenant
+        .link_account(created_tenant_resp.clone().unwrap(), by_account_id.clone())
+        .await;
     if link_resp.is_err() {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -255,7 +251,9 @@ async fn link_tenant_account(
 
     let tenant_repository = TenantRepository::new(&pool).await;
     let tenant = Tenant::new(&tenant_repository).await;
-    let link_resp = tenant.link_account(link_tenant.tenant_id, by_account_id.clone()).await;
+    let link_resp = tenant
+        .link_account(link_tenant.tenant_id, by_account_id.clone())
+        .await;
     if link_resp.is_err() {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
