@@ -1,7 +1,8 @@
 use clickhouse::sql::Identifier;
 use clickhouse::Client;
 use clickhouse::Row;
-use serde::Deserialize;
+use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 use crate::schema::{
     JsonSchemaDiff, JsonSchemaPropertyDiff, JsonSchemaPropertyEntryDiff, JsonSchemaPropertyStatus,
@@ -152,41 +153,35 @@ impl ClickHouseRepository {
         })
     }
 
-    pub async fn execute_migration(&self, schema_diff: JsonSchemaDiff) -> Result<(), ()> {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        let start = SystemTime::now();
-        let since_the_epoch = start
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards");
-
-        let millis = since_the_epoch.as_millis();
-        println!("time: {:?}", millis.to_string());
-
+    pub async fn execute_init_migration(
+        &self,
+        table_name: String,
+        migration_plan: ChTableMigration,
+    ) -> Result<(), ()> {
         let mut args: Vec<(String, String)> = vec![];
 
-        for diff in schema_diff.diff {
-            let name = diff.name.clone();
-            let diff_ch_type: Result<String, ()> = match diff.diff[1].clone().status.clone() {
-                JsonSchemaPropertyStatus::Added(new) => Ok(new),
+        for column in migration_plan.columns {
+            let name = column.name.clone();
+
+            let change_column_type: Result<String, ()> = match column.type_.clone() {
+                ChColumnMigrationStatus::Added(new) => Ok(new),
                 _ => Err(()),
             };
-            args.push((name, diff_ch_type.unwrap()));
+
+            if change_column_type.is_ok() {
+                args.push((name, change_column_type.unwrap()));
+            }
         }
 
-        // vec![("name", "String")]
         let placeholders_str = args.iter().map(|_| "? ?").collect::<Vec<_>>().join(", ");
-
-        let table_name = format!("table_{}", millis);
-
         let raw_query = format!(
             "
         CREATE TABLE ? (
             {}
         )
         ENGINE = MergeTree
-        ORDER BY `name`
-        PARTITION BY `name`
+        ORDER BY ?
+        PARTITION BY ?
         ",
             placeholders_str
         );
@@ -202,11 +197,72 @@ impl ClickHouseRepository {
                 .bind(Identifier(arg.1.as_str()));
         }
 
+        // order by, partition by
+        let order_by: Result<String, ()> = match migration_plan.order_by {
+            ChColumnMigrationStatus::Added(new) => Ok(new),
+            _ => Err(()),
+        };
+        if order_by.is_err() {
+            println!("Error order_by for query!");
+            return Err(());
+        }
+
+        query = query
+            .bind(Identifier(order_by.clone().unwrap().as_str()))
+            .bind(Identifier(order_by.clone().unwrap().as_str()));
+
         let exec = query.execute().await;
 
         if exec.is_err() {
             println!("Migration {:?}", exec);
             return Err(());
+        }
+
+        Ok(())
+    }
+
+    pub async fn execute_migration(
+        &self,
+        table_name: String,
+        migration_plan: ChTableMigration,
+    ) -> Result<(), String> {
+        let mut args: Vec<(String, String)> = vec![];
+
+        for column in migration_plan.columns {
+            let name = column.name.clone();
+
+            let change_column_type: Result<String, ()> = match column.type_.clone() {
+                ChColumnMigrationStatus::Added(new) => Ok(new),
+                _ => return Err("[Internal] Only Added supported!".to_string()),
+            };
+
+            if change_column_type.is_ok() {
+                args.push((name, change_column_type.unwrap()));
+            }
+        }
+
+        let order_by: Result<(), ()> = match migration_plan.order_by {
+            ChColumnMigrationStatus::NoChange => Ok(()),
+            _ => return Err("[Internal] Only NoChange supported for order_by!".to_string()),
+        };
+
+        for arg in args {
+            let mut query = self
+                .client
+                .query(
+                    "
+                ALTER TABLE ? ADD COLUMN ? ?
+                ",
+                )
+                .bind(Identifier(table_name.as_str()))
+                .bind(Identifier(arg.0.as_str()))
+                .bind(Identifier(arg.1.as_str()));
+
+            let exec = query.execute().await;
+
+            if exec.is_err() {
+                return Err(format!("[CH] {:?}", exec));
+            }
         }
 
         Ok(())
@@ -231,6 +287,26 @@ impl ClickHouseTenantRepository {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ChColumnMigrationStatus<T> {
+    NoChange,
+    Added(T),
+    Changed(T, T),
+    Removed(T),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ChColumnMigration {
+    pub name: String,
+    pub type_: ChColumnMigrationStatus<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ChTableMigration {
+    pub columns: Vec<ChColumnMigration>,
+    pub order_by: ChColumnMigrationStatus<String>,
+}
+
 #[cfg(test)]
 pub mod test {
     use super::*;
@@ -244,6 +320,19 @@ pub mod test {
     #[fixture]
     pub async fn repo() -> ClickHouseRepository {
         ClickHouseRepository::new("clickhouse://...".to_string())
+    }
+
+    #[fixture]
+    pub fn unique_table_name() -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let start = SystemTime::now();
+        let since_the_epoch = start
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards");
+        let millis = since_the_epoch.as_millis();
+        let salt: [u8; 16] = rand::thread_rng().gen();
+        let salt_hex = hex::encode(salt);
+        format!("table_{}{}", millis, salt_hex)
     }
 
     #[rstest]
@@ -266,28 +355,74 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
-    async fn generate_migration_by_schema_change(#[future] repo: ClickHouseRepository) {
-        let schema_diff = JsonSchemaDiff {
-            unsupported_change: false,
-            diff: vec![JsonSchemaPropertyDiff {
-                name: "name".to_string(),
-                status: JsonSchemaPropertyStatus::Added("".to_string()),
-                diff: vec![
-                    JsonSchemaPropertyEntryDiff {
-                        name: "type".to_string(),
-                        status: JsonSchemaPropertyStatus::Added("string".to_string()),
-                    },
-                    JsonSchemaPropertyEntryDiff {
-                        name: "x-manyevents-ch-type".to_string(),
-                        status: JsonSchemaPropertyStatus::Added("String".to_string()),
-                    },
-                ],
-            }],
+    async fn generate_migration_by_schema_change(
+        unique_table_name: String,
+        #[future] repo: ClickHouseRepository,
+    ) {
+        let migration_plan = ChTableMigration {
+            order_by: ChColumnMigrationStatus::Added("name".to_string()),
+            columns: vec![
+                ChColumnMigration {
+                    name: "name".to_string(),
+                    type_: ChColumnMigrationStatus::Added("String".to_string()),
+                },
+                ChColumnMigration {
+                    name: "age".to_string(),
+                    type_: ChColumnMigrationStatus::Added("Int64".to_string()),
+                },
+            ],
         };
         let repo = repo.await;
 
-        let migration = repo.execute_migration(schema_diff).await;
+        let migration = repo
+            .execute_init_migration(unique_table_name, migration_plan)
+            .await;
 
-        assert!(migration.is_ok());
+        assert!(
+            migration.is_ok(),
+            "Migration failed with error: {:?}",
+            migration.unwrap_err()
+        );
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn generate_migration_by_schema_change_2_steps(
+        unique_table_name: String,
+        #[future] repo: ClickHouseRepository,
+    ) {
+        let migration_plan = ChTableMigration {
+            order_by: ChColumnMigrationStatus::Added("name".to_string()),
+            columns: vec![ChColumnMigration {
+                name: "name".to_string(),
+                type_: ChColumnMigrationStatus::Added("String".to_string()),
+            }],
+        };
+        let repo = repo.await;
+        let migration = repo
+            .execute_init_migration(unique_table_name.clone(), migration_plan)
+            .await;
+        assert!(
+            migration.is_ok(),
+            "Migration failed with error: {:?}",
+            migration.unwrap_err()
+        );
+        let migration_plan_2 = ChTableMigration {
+            order_by: ChColumnMigrationStatus::NoChange,
+            columns: vec![ChColumnMigration {
+                name: "age".to_string(),
+                type_: ChColumnMigrationStatus::Added("Int64".to_string()),
+            }],
+        };
+
+        let migration_2 = repo
+            .execute_migration(unique_table_name.clone(), migration_plan_2)
+            .await;
+
+        assert!(
+            migration_2.is_ok(),
+            "Migration_2 failed with error: {:?}",
+            migration_2.unwrap_err()
+        );
     }
 }
