@@ -3,9 +3,10 @@ use clickhouse::Client;
 use clickhouse::Row;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::schema::{
-    JsonSchemaDiff, JsonSchemaPropertyDiff, JsonSchemaPropertyEntryDiff, JsonSchemaPropertyStatus,
+    JsonSchemaProperty, JsonSchemaEntity,
     SerializationType,
 };
 
@@ -175,7 +176,7 @@ impl ClickHouseRepository {
 
         let placeholders_str = args.iter().map(|_| "? ?").collect::<Vec<_>>().join(", ");
         let raw_query = format!(
-            "
+        "
         CREATE TABLE ? (
             {}
         )
@@ -307,6 +308,36 @@ pub struct ChTableMigration {
     pub order_by: ChColumnMigrationStatus<String>,
 }
 
+
+pub fn make_migration_plan(from: JsonSchemaEntity, to: JsonSchemaEntity) -> ChTableMigration {
+    let mut columns: Vec<ChColumnMigration> = vec![];
+
+    for (name, to_property) in &to.properties {
+        println!("{name:?} has {to_property:?}");
+
+        if !from.properties.contains_key(name) {
+            columns.push(ChColumnMigration {
+                name: name.clone(),
+                type_: ChColumnMigrationStatus::Added(to_property.type_.clone()),
+            })
+        } else {
+            let from_property = from.properties[name].clone();
+
+            if to_property.type_ != from_property.type_ {
+                columns.push(ChColumnMigration {
+                    name: name.clone(),
+                    type_: ChColumnMigrationStatus::Changed(from_property.type_.clone(), to_property.type_.clone()),
+                })
+            }
+        }
+    }
+
+    ChTableMigration {
+        columns: columns,
+        order_by: ChColumnMigrationStatus::NoChange,
+    }
+}
+
 #[cfg(test)]
 pub mod test {
     use super::*;
@@ -424,5 +455,66 @@ pub mod test {
             "Migration_2 failed with error: {:?}",
             migration_2.unwrap_err()
         );
+    }
+
+    #[rstest]
+    fn diff_entities_same_schema() {
+        let the_same = JsonSchemaEntity {
+            properties: HashMap::from([(
+                "name".to_string(),
+                JsonSchemaProperty {
+                    type_: "string".to_string(),
+                    x_manyevents_ch_type: "String".to_string(),
+                },
+            )]),
+        };
+
+        let migration_plan = make_migration_plan(the_same.clone(), the_same.clone());
+        assert_eq!(migration_plan.columns.len(), 0);
+    }
+
+    #[rstest]
+    fn diff_entities_new_field() {
+        let empty = JsonSchemaEntity {
+            properties: HashMap::new(),
+        };
+        let new = JsonSchemaEntity {
+            properties: HashMap::from([(
+                "name".to_string(),
+                JsonSchemaProperty {
+                    type_: "string".to_string(),
+                    x_manyevents_ch_type: "String".to_string(),
+                },
+            )]),
+        };
+
+        let migration_plan = make_migration_plan(empty, new);
+        assert_eq!(migration_plan.columns.len(), 1);
+    }
+
+    #[rstest]
+    fn diff_entities_schema_changed_type() {
+        let old = JsonSchemaEntity {
+            properties: HashMap::from([(
+                "name".to_string(),
+                JsonSchemaProperty {
+                    type_: "string".to_string(),
+                    x_manyevents_ch_type: "String".to_string(),
+                },
+            )]),
+        };
+        let new = JsonSchemaEntity {
+            properties: HashMap::from([(
+                "name".to_string(),
+                JsonSchemaProperty {
+                    type_: "integer".to_string(),
+                    x_manyevents_ch_type: "Int64".to_string(),
+                },
+            )]),
+        };
+
+        let migration_plan = make_migration_plan(old, new);
+
+        assert_eq!(migration_plan.columns.len(), 1);
     }
 }

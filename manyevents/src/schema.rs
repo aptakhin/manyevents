@@ -115,89 +115,7 @@ pub struct JsonSchemaEntity {
     pub properties: HashMap<String, JsonSchemaProperty>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum JsonSchemaPropertyStatus {
-    Added(String),
-    Changed(String, String),
-    Removed(String),
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JsonSchemaPropertyEntryDiff {
-    pub name: String,
-    pub status: JsonSchemaPropertyStatus,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JsonSchemaPropertyDiff {
-    pub name: String,
-    pub status: JsonSchemaPropertyStatus,
-    pub diff: Vec<JsonSchemaPropertyEntryDiff>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JsonSchemaDiff {
-    pub diff: Vec<JsonSchemaPropertyDiff>,
-    pub unsupported_change: bool,
-}
-
-pub fn diff_schema(from: JsonSchemaEntity, to: JsonSchemaEntity) -> JsonSchemaDiff {
-    let mut unsupported_change = false;
-    let mut changes: Vec<JsonSchemaPropertyDiff> = vec![];
-
-    for (name, to_property) in &to.properties {
-        println!("{name:?} has {to_property:?}");
-
-        let mut has_change = false;
-        let mut status = JsonSchemaPropertyStatus::Added("".to_string());
-        let mut entry_changes: Vec<JsonSchemaPropertyEntryDiff> = vec![];
-
-        if !from.properties.contains_key(name) {
-            has_change = true;
-        } else {
-            let from_property = from.properties[name].clone();
-            // TODO: need to check all fields in JsonSchemaProperty
-            if to_property.type_ != from_property.type_ {
-                entry_changes.push(JsonSchemaPropertyEntryDiff {
-                    name: "type".to_string(),
-                    status: JsonSchemaPropertyStatus::Changed(
-                        from_property.type_.clone(),
-                        to_property.type_.clone(),
-                    ),
-                });
-                status = JsonSchemaPropertyStatus::Changed("".to_string(), "".to_string());
-                has_change = true;
-            }
-
-            if to_property.x_manyevents_ch_type != from_property.x_manyevents_ch_type {
-                entry_changes.push(JsonSchemaPropertyEntryDiff {
-                    name: "x-manyevents-ch-type".to_string(),
-                    status: JsonSchemaPropertyStatus::Changed(
-                        from_property.x_manyevents_ch_type.clone(),
-                        to_property.x_manyevents_ch_type.clone(),
-                    ),
-                });
-                status = JsonSchemaPropertyStatus::Changed("".to_string(), "".to_string());
-                has_change = true;
-            }
-        }
-
-        if has_change {
-            changes.push(JsonSchemaPropertyDiff {
-                name: name.to_string(),
-                status: status,
-                diff: entry_changes,
-            })
-        }
-    }
-
-    JsonSchemaDiff {
-        diff: changes,
-        unsupported_change,
-    }
-}
-
-pub fn xxx() {
+pub fn validate_json_example() {
     use jsonschema::{Retrieve, Uri};
     use serde_json::{json, Value};
     use std::{collections::HashMap, sync::Arc};
@@ -259,7 +177,7 @@ pub mod test {
 
     #[rstest]
     fn test_json_schema() {
-        xxx()
+        validate_json_example()
     }
 
     #[rstest]
@@ -287,80 +205,5 @@ pub mod test {
             entity.properties["age"].x_manyevents_ch_type,
             "Int32".to_string()
         );
-    }
-
-    #[rstest]
-    fn diff_entities_same_schema() {
-        let the_same = JsonSchemaEntity {
-            properties: HashMap::from([(
-                "name".to_string(),
-                JsonSchemaProperty {
-                    type_: "string".to_string(),
-                    x_manyevents_ch_type: "String".to_string(),
-                },
-            )]),
-        };
-
-        let diff = diff_schema(the_same.clone(), the_same.clone());
-        assert_eq!(diff.unsupported_change, false);
-        assert_eq!(diff.diff.len(), 0);
-    }
-
-    #[rstest]
-    fn diff_entities_new_field() {
-        let empty = JsonSchemaEntity {
-            properties: HashMap::new(),
-        };
-        let new = JsonSchemaEntity {
-            properties: HashMap::from([(
-                "name".to_string(),
-                JsonSchemaProperty {
-                    type_: "string".to_string(),
-                    x_manyevents_ch_type: "String".to_string(),
-                },
-            )]),
-        };
-
-        let diff = diff_schema(empty, new);
-        assert_eq!(diff.unsupported_change, false);
-        assert_eq!(diff.diff.len(), 1);
-        let status = diff.diff[0].status.clone();
-        assert!(match status {
-            JsonSchemaPropertyStatus::Added(_) => true,
-            _ => false,
-        });
-    }
-
-    #[rstest]
-    fn diff_entities_schema_changed_type() {
-        let old = JsonSchemaEntity {
-            properties: HashMap::from([(
-                "name".to_string(),
-                JsonSchemaProperty {
-                    type_: "string".to_string(),
-                    x_manyevents_ch_type: "String".to_string(),
-                },
-            )]),
-        };
-        let new = JsonSchemaEntity {
-            properties: HashMap::from([(
-                "name".to_string(),
-                JsonSchemaProperty {
-                    type_: "integer".to_string(),
-                    x_manyevents_ch_type: "Int64".to_string(),
-                },
-            )]),
-        };
-
-        let diff = diff_schema(old, new);
-        assert_eq!(diff.unsupported_change, false);
-        assert_eq!(diff.diff.len(), 1);
-        assert_eq!(diff.diff[0].name, "name".to_string());
-        let status = diff.diff[0].status.clone();
-        assert!(match status {
-            JsonSchemaPropertyStatus::Changed(_, _) => true,
-            _ => false,
-        });
-        assert_eq!(diff.diff[0].diff.len(), 2);
     }
 }
