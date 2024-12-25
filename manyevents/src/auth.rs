@@ -173,7 +173,7 @@ impl<'a> AccountRepository<'a> {
             return Err("Internal error".to_string());
         }
 
-        let (is_inserted, account_id, db_hashed_password) = result.unwrap();
+        let (_is_inserted, account_id, db_hashed_password) = result.unwrap();
         if hashed_password != db_hashed_password {
             return Err("Passwords are not matching!".to_string());
         }
@@ -270,11 +270,10 @@ impl<'a> ApiAuthRepository<'a> {
     }
 
     pub async fn check_token(&self, token: String) -> Result<Uuid, String> {
-        let result: Result<(Uuid, String), String> = sqlx::query_as(
+        let result: Result<(Uuid,), String> = sqlx::query_as(
             "
             SELECT
-                account_id,
-                type
+                account_id
             FROM auth_token
             WHERE
                 token = $1 AND type = $2
@@ -292,7 +291,7 @@ impl<'a> ApiAuthRepository<'a> {
         });
 
         match result {
-            Ok((id, type_)) => Ok(id),
+            Ok((id,)) => Ok(id),
             Err(_) => Err("invalid_token".to_string()),
         }
     }

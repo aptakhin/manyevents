@@ -1,7 +1,7 @@
 use axum::{
     async_trait,
     body::Bytes,
-    extract::{Form, FromRef, FromRequest, FromRequestParts, Request, State},
+    extract::{Form, FromRequest, Request, State},
     http::{request::Parts, StatusCode},
     response::{Html, IntoResponse, Redirect, Response},
     routing::get,
@@ -60,43 +60,7 @@ async fn make_db() -> DbPool {
         .acquire_timeout(Duration::from_secs(3))
         .connect(&db_connection_str)
         .await
-        .expect("can't connect to database")
-}
-
-async fn using_connection_pool_extractor(
-    State(pool): State<DbPool>,
-) -> Result<String, (StatusCode, String)> {
-    sqlx::query_scalar("select 'hello world from pg'")
-        .fetch_one(&pool)
-        .await
-        .map_err(internal_error)
-}
-
-#[derive(Debug)]
-struct DatabaseConnection(sqlx::pool::PoolConnection<sqlx::Postgres>);
-
-#[async_trait]
-impl<S> FromRequestParts<S> for DatabaseConnection
-where
-    DbPool: FromRef<S>,
-    S: Send + Sync,
-{
-    type Rejection = (StatusCode, String);
-
-    async fn from_request_parts(_parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let pool = DbPool::from_ref(state);
-        let conn = pool.acquire().await.map_err(internal_error)?;
-        Ok(Self(conn))
-    }
-}
-
-async fn using_connection_extractor(
-    DatabaseConnection(mut conn): DatabaseConnection,
-) -> Result<String, (StatusCode, String)> {
-    sqlx::query_scalar("select 'hello world from pg'")
-        .fetch_one(&mut *conn)
-        .await
-        .map_err(internal_error)
+        .expect("Can't connect to the database")
 }
 
 fn internal_error<E>(err: E) -> (StatusCode, String)
@@ -248,9 +212,9 @@ async fn create_tenant(
     if auth_response.is_err() {
         return Err(StatusCode::UNAUTHORIZED);
     }
-
     let by_account_id = auth_response.clone().unwrap().0;
 
+    // TODO: wrap TenantRepository into the transaction
     let tenant_repository = TenantRepository::new(&pool).await;
     let tenant = Tenant::new(&tenant_repository).await;
     let created_tenant_resp = tenant.create(tenant_request.title, by_account_id.clone()).await;
@@ -278,7 +242,6 @@ async fn link_tenant_account(
     if auth_response.is_err() {
         return Err(StatusCode::UNAUTHORIZED);
     }
-
     let by_account_id = auth_response.clone().unwrap().0;
 
     let action = AccountActionOnTenant::CanLinkAccount;
@@ -286,14 +249,12 @@ async fn link_tenant_account(
     let ensure_response = Account::new(&account_repository)
         .ensure_permissions_on_tenant(by_account_id.clone(), link_tenant.tenant_id, action)
         .await;
-
     if ensure_response.is_err() {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
     let tenant_repository = TenantRepository::new(&pool).await;
     let tenant = Tenant::new(&tenant_repository).await;
-
     let link_resp = tenant.link_account(link_tenant.tenant_id, by_account_id.clone()).await;
     if link_resp.is_err() {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -380,10 +341,6 @@ async fn routes_app() -> Router<()> {
         .route(
             "/api/manage/v1/link-tenant-account",
             post(link_tenant_account),
-        )
-        .route(
-            "/db",
-            get(using_connection_pool_extractor).post(using_connection_extractor),
         )
         .with_state(pool);
 
