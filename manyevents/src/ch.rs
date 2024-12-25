@@ -3,7 +3,7 @@ use clickhouse::Client;
 use clickhouse::Row;
 use serde::Deserialize;
 
-use crate::schema::SerializationType;
+use crate::schema::{SerializationType, JsonSchemaDiff, JsonSchemaPropertyDiff, JsonSchemaPropertyStatus, JsonSchemaPropertyEntryDiff};
 
 #[derive(Row, Deserialize, Debug)]
 pub struct ChColumn {
@@ -148,6 +148,58 @@ impl ClickHouseRepository {
             db_password,
         })
     }
+
+    pub async fn execute_migration(&self, schema_diff: JsonSchemaDiff) -> Result<(), ()> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let start = SystemTime::now();
+        let since_the_epoch = start
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards");
+
+        let millis = since_the_epoch.as_millis();
+        println!("time: {:?}", millis.to_string());
+
+        let mut args: Vec<(String, String)> = vec![];
+
+        for diff in schema_diff.diff {
+            let name = diff.name.clone();
+            let diff_ch_type: Result<String, ()> = match diff.diff[1].clone().status.clone() {
+                JsonSchemaPropertyStatus::Added(new) => Ok(new),
+                _ => Err(()),
+            };
+            args.push((name, diff_ch_type.unwrap()));
+        }
+
+        // vec![("name", "String")]
+        let placeholders_str = args.iter().map(|_| "? ?").collect::<Vec<_>>().join(", ");
+
+        let table_name = format!("table_{}", millis);
+
+        let raw_query = format!("
+        CREATE TABLE ? (
+            {}
+        )
+        ENGINE = MergeTree
+        ORDER BY `name`
+        PARTITION BY `name`
+        ", placeholders_str);
+
+        let mut query = self.client.query(raw_query.as_str()).bind(Identifier(table_name.as_str()));
+
+        for arg in args {
+            query = query.bind(Identifier(arg.0.as_str())).bind(Identifier(arg.1.as_str()));
+        }
+
+        let exec = query.execute().await;
+
+        if exec.is_err() {
+            println!("Migration {:?}", exec);
+            return Err(());
+        }
+
+        Ok(())
+    }
 }
 
 pub struct ClickHouseTenantRepository {
@@ -257,7 +309,36 @@ pub mod test {
     }
 
     #[rstest]
-    async fn test_json_schema() {
+    fn test_json_schema() {
         xxx()
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn generate_migration_by_schema_change(#[future] repo: ClickHouseRepository) {
+        let schema_diff = JsonSchemaDiff {
+            unsupported_change: false,
+            diff: vec![
+                JsonSchemaPropertyDiff {
+                    name: "name".to_string(),
+                    status: JsonSchemaPropertyStatus::Added("".to_string()),
+                    diff: vec![
+                        JsonSchemaPropertyEntryDiff {
+                            name: "type".to_string(),
+                            status: JsonSchemaPropertyStatus::Added("string".to_string()),
+                        },
+                        JsonSchemaPropertyEntryDiff {
+                            name: "x-manyevents-ch-type".to_string(),
+                            status: JsonSchemaPropertyStatus::Added("String".to_string()),
+                        },
+                    ],
+                },
+            ],
+        };
+        let repo = repo.await;
+
+        let migration = repo.execute_migration(schema_diff).await;
+
+        assert!(migration.is_ok());
     }
 }

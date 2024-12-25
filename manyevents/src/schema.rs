@@ -103,7 +103,7 @@ pub fn read_event_data(event_root: &Value) -> Result<Event, EventError> {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct JsonSchemaProperty {
+pub struct JsonSchemaProperty {
     #[serde(rename = "type")]
     pub type_: String,
 
@@ -112,32 +112,32 @@ struct JsonSchemaProperty {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct JsonSchemaEntity {
+pub struct JsonSchemaEntity {
     pub properties: HashMap<String, JsonSchemaProperty>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-enum JsonSchemaPropertyStatus {
+pub enum JsonSchemaPropertyStatus {
     Added(String),
     Changed(String, String),
     Removed(String),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct JsonSchemaPropertyEntryDiff {
+pub struct JsonSchemaPropertyEntryDiff {
     pub name: String,
     pub status: JsonSchemaPropertyStatus,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct JsonSchemaPropertyDiff {
+pub struct JsonSchemaPropertyDiff {
     pub name: String,
     pub status: JsonSchemaPropertyStatus,
     pub diff: Vec<JsonSchemaPropertyEntryDiff>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct JsonSchemaDiff {
+pub struct JsonSchemaDiff {
     pub diff: Vec<JsonSchemaPropertyDiff>,
     pub unsupported_change: bool,
 }
