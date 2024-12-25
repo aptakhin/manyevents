@@ -1,8 +1,8 @@
-use uuid::Uuid;
 use crate::DbPool;
+use uuid::Uuid;
 
+use crate::scope::ScopeRepository;
 use crate::tenant::{Tenant, TenantRepository};
-use crate::scope::{ScopeRepository};
 
 pub struct Proto {
     // repo: &'a TenantRepository<'a>,
@@ -15,9 +15,7 @@ impl Proto {
 
         let tenant_title = "my-company".to_string();
 
-        let created_tenant_resp = tenant
-            .create(tenant_title, by_account_id.clone())
-            .await;
+        let created_tenant_resp = tenant.create(tenant_title, by_account_id.clone()).await;
         if created_tenant_resp.is_err() {
             return Err(());
         }
@@ -29,16 +27,37 @@ impl Proto {
         }
 
         let scope = ScopeRepository::new(pool);
-        let scope_resp = scope.create_scope("test-scope".to_string(), "test".to_string(), by_account_id.clone()).await;
+        let scope_resp = scope
+            .create_scope(
+                "test-scope".to_string(),
+                "test".to_string(),
+                by_account_id.clone(),
+            )
+            .await;
         if scope_resp.is_err() {
             return Err(());
         }
 
-        let storage_credential_resp = scope.create_storage_credential(created_tenant_resp.unwrap(), "clickhouse".to_string(), "clickhouse://...".to_string(), by_account_id.clone()).await;
+        let storage_credential_resp = scope
+            .create_storage_credential(
+                created_tenant_resp.unwrap(),
+                "clickhouse".to_string(),
+                "clickhouse://...".to_string(),
+                by_account_id.clone(),
+            )
+            .await;
         if storage_credential_resp.is_err() {
             return Err(());
         }
-        let scope_environment_resp = scope.create_scope_environment(scope_resp.unwrap(), storage_credential_resp.unwrap(), "prod".to_string(), "prod".to_string(), by_account_id.clone()).await;
+        let scope_environment_resp = scope
+            .create_scope_environment(
+                scope_resp.unwrap(),
+                storage_credential_resp.unwrap(),
+                "prod".to_string(),
+                "prod".to_string(),
+                by_account_id.clone(),
+            )
+            .await;
         if scope_environment_resp.is_err() {
             return Err(());
         }
@@ -47,17 +66,16 @@ impl Proto {
     }
 }
 
-
 #[cfg(test)]
 pub mod test {
+    use super::*;
+    use crate::test::{add_random_email_account, pool};
     use axum::{
         body::Body,
         http::{self, Request, StatusCode},
     };
     use hex::encode;
     use rstest::{fixture, rstest};
-    use super::*;
-    use crate::test::{add_random_email_account, pool};
 
     #[rstest]
     #[tokio::test]

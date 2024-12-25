@@ -1,7 +1,6 @@
 use crate::DbPool;
 use uuid::Uuid;
 
-
 pub struct ScopeRepository<'a> {
     pool: &'a DbPool,
 }
@@ -11,7 +10,12 @@ impl<'a> ScopeRepository<'a> {
         ScopeRepository { pool }
     }
 
-    pub async fn create_scope(&self, title: String, slug: String, by_account_id: Uuid) -> Result<Uuid, ()> {
+    pub async fn create_scope(
+        &self,
+        title: String,
+        slug: String,
+        by_account_id: Uuid,
+    ) -> Result<Uuid, ()> {
         sqlx::query_as(
             "
             INSERT INTO scope (title, slug, created_by_account_id)
@@ -31,7 +35,13 @@ impl<'a> ScopeRepository<'a> {
         })
     }
 
-    pub async fn create_storage_credential(&self, tenant_id: Uuid, type_: String, dsn: String, by_account_id: Uuid) -> Result<Uuid, ()> {
+    pub async fn create_storage_credential(
+        &self,
+        tenant_id: Uuid,
+        type_: String,
+        dsn: String,
+        by_account_id: Uuid,
+    ) -> Result<Uuid, ()> {
         sqlx::query_as(
             "
             INSERT INTO storage_credential (tenant_id, type, dsn, created_by_account_id)
@@ -52,7 +62,14 @@ impl<'a> ScopeRepository<'a> {
         })
     }
 
-    pub async fn create_scope_environment(&self, scope_id: Uuid, storage_credential_id: Uuid, title: String, slug: String, by_account_id: Uuid) -> Result<Uuid, ()> {
+    pub async fn create_scope_environment(
+        &self,
+        scope_id: Uuid,
+        storage_credential_id: Uuid,
+        title: String,
+        slug: String,
+        by_account_id: Uuid,
+    ) -> Result<Uuid, ()> {
         sqlx::query_as(
             "
             INSERT INTO scope_environment (scope_id, storage_credential_id, title, slug, created_by_account_id)

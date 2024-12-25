@@ -30,10 +30,10 @@ use uuid::Uuid;
 
 mod auth;
 mod ch;
-mod schema;
-mod tenant;
-mod scope;
 mod proto;
+mod schema;
+mod scope;
+mod tenant;
 
 use crate::auth::{
     ensure_header_authentification, Account, AccountActionOnTenant, AccountRepository, ApiAuth,

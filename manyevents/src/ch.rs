@@ -72,3 +72,120 @@ pub async fn insert_smth(table_name: String, rows: Vec<ChColumn>) {
 
     println!("I: {:?}", yy);
 }
+
+pub struct ClickHouseTenantCredential {
+    pub role: String,
+    pub db_name: String,
+    pub db_user: String,
+    pub db_password: String,
+}
+
+pub struct ClickHouseRepository {
+    client: Client,
+}
+
+impl ClickHouseRepository {
+    pub fn new(dsn: String) -> ClickHouseRepository {
+        let client = Client::default()
+            .with_url("http://localhost:8123")
+            .with_user("username")
+            .with_password("password")
+            .with_database("helloworld")
+            .with_option("async_insert", "1")
+            .with_option("wait_for_async_insert", "0");
+
+        ClickHouseRepository { client }
+    }
+
+    pub async fn create_credential(&self, unique_prefix: String, db_password: String) -> Result<ClickHouseTenantCredential, ()> {
+        let role = format!("{}_admin_role", unique_prefix);
+        let db_name = format!("{}_db", unique_prefix);
+        let db_user = format!("{}_user", unique_prefix);
+
+        let res_3 = self
+            .client
+            .query("CREATE ROLE ?")
+            .bind(Identifier(role.as_str()))
+            .execute()
+            .await;
+        println!("CH {:?}", res_3);
+
+        let res_2 = self
+            .client
+            .query("CREATE DATABASE ?")
+            .bind(Identifier(db_name.as_str()))
+            .execute()
+            .await;
+        println!("CH {:?}", res_2);
+
+        let res_4 = self
+            .client
+            .query("GRANT SELECT ON ?.* TO ?;")
+            .bind(Identifier(db_name.as_str()))
+            .bind(Identifier(role.as_str()))
+            .execute()
+            .await;
+        println!("CH {:?}", res_4);
+
+        let res = self.client.query("CREATE USER ? IDENTIFIED WITH sha256_password BY ? DEFAULT DATABASE ?").bind(Identifier(db_user.as_str())).bind(db_password.clone()).bind(Identifier(db_name.as_str())).execute().await;
+        println!("CH {:?}", res);
+
+        Ok(ClickHouseTenantCredential {
+            role,
+            db_name,
+            db_user,
+            db_password,
+        })
+    }
+}
+
+pub struct ClickHouseTenantRepository {
+    pub client: Client,
+}
+
+impl ClickHouseTenantRepository {
+    pub fn new(tenant: ClickHouseTenantCredential) -> ClickHouseTenantRepository {
+        let client = Client::default()
+            .with_url("http://localhost:8123")
+            .with_user(tenant.db_user)
+            .with_password(tenant.db_password)
+            .with_database(tenant.db_name)
+            .with_option("async_insert", "1")
+            .with_option("wait_for_async_insert", "0");
+
+        ClickHouseTenantRepository { client }
+    }
+}
+
+
+#[cfg(test)]
+pub mod test {
+    use super::*;
+    use axum::{
+        body::Body,
+        http::{self, Request, StatusCode},
+    };
+    use hex::encode;
+    use rstest::{fixture, rstest};
+
+    #[fixture]
+    pub async fn repo() -> ClickHouseRepository {
+        ClickHouseRepository::new("clickhouse://...".to_string())
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_create_credential(#[future] repo: ClickHouseRepository) {
+        let repo = repo.await;
+
+        let cred = repo.create_credential("abc2".to_string(), "my_password".to_string()).await;
+
+        assert!(cred.is_ok());
+        let cred = cred.unwrap();
+
+        let tenant_repo = ClickHouseTenantRepository::new(cred);
+        let res = tenant_repo.client.query("select 'hleoo'").execute().await;
+        println!("CY {:?}", res);
+        assert!(res.is_ok());
+    }
+}
