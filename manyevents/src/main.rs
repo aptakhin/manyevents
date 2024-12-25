@@ -42,6 +42,10 @@ use crate::auth::{
     ApiAuthRepository,
     Authentificated,
 };
+use crate::tenant::{
+    TenantRepository,
+    Tenant,
+};
 use crate::ch::{insert_smth, ChColumn};
 use crate::schema::read_event_data;
 
@@ -238,61 +242,29 @@ async fn create_tenant(
     auth: TypedHeader<Authorization<Bearer>>,
     // why I can't use? Authentificated(auth2): Authentificated,
     State(pool): State<DbPool>,
-    Json(tenant): Json<CreateTenantRequest>,
+    Json(tenant_request): Json<CreateTenantRequest>,
 ) -> Result<Json<CreateTenantResponse>, StatusCode> {
     let auth_response = ensure_header_authentification(auth, &pool).await;
     if auth_response.is_err() {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    // Create tenant itself
-    let results: Result<(bool, Uuid), String> = sqlx::query_as(
-        "
-        INSERT INTO tenant (title, created_by_account_id)
-            VALUES ($1, $2)
-            RETURNING true, id
-        ",
-    )
-    .bind(tenant.title.clone())
-    .bind(auth_response.clone().unwrap().0)
-    .fetch_one(&pool)
-    .await
-    .and_then(|r| Ok(r))
-    .or_else(|e| {
-        println!("Database query error: {}", e);
-        Err("Failed".to_string())
-    });
+    let by_account_id = auth_response.clone().unwrap().0;
 
-    if results.is_err() {
-        return Ok(Json(CreateTenantResponse {
-            is_success: false,
-            id: None,
-        }));
+    let tenant_repository = TenantRepository::new(&pool).await;
+    let tenant = Tenant::new(&tenant_repository).await;
+    let created_tenant_resp = tenant.create(tenant_request.title, by_account_id.clone()).await;
+    if created_tenant_resp.is_err() {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
-
-    let result_id = results.unwrap().1;
-
-    // Create link with created account_id
-    let results_2 = sqlx::query(
-        "
-        INSERT INTO tenant_and_account (tenant_id, account_id)
-            VALUES ($1, $2)
-            RETURNING id
-        ",
-    )
-    .bind(result_id)
-    .bind(auth_response.clone().unwrap().0)
-    .fetch_all(&pool)
-    .await
-    .and_then(|r| Ok(r))
-    .or_else(|e| {
-        println!("Database query error: {}", e);
-        Err(e)
-    });
+    let link_resp = tenant.link_account(created_tenant_resp.clone().unwrap(), by_account_id.clone()).await;
+    if link_resp.is_err() {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
 
     let response = CreateTenantResponse {
         is_success: true,
-        id: Some(result_id),
+        id: Some(created_tenant_resp.clone().unwrap()),
     };
     Ok(Json(response))
 }
@@ -307,54 +279,26 @@ async fn link_tenant_account(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
+    let by_account_id = auth_response.clone().unwrap().0;
+
     let action = AccountActionOnTenant::CanLinkAccount;
     let account_repository = AccountRepository { pool: &pool };
     let ensure_response = Account::new(&account_repository)
-        .ensure_permissions_on_tenant(auth_response.unwrap().0, link_tenant.tenant_id, action)
+        .ensure_permissions_on_tenant(by_account_id.clone(), link_tenant.tenant_id, action)
         .await;
 
     if ensure_response.is_err() {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let results = sqlx::query(
-        "
-        INSERT INTO tenant_and_account (tenant_id, account_id)
-            VALUES ($1, $2)
-            RETURNING id
-        ",
-    )
-    .bind(link_tenant.tenant_id.clone())
-    .bind(link_tenant.account_id.clone())
-    .fetch_all(&pool)
-    .await
-    .and_then(|r| {
-        let processed_result: Vec<Uuid> = r
-            .iter()
-            .map(|row| row.get::<Uuid, _>(0))
-            .collect::<Vec<Uuid>>();
-        Ok(Some(processed_result))
-    })
-    .or_else(|e| {
-        println!("Database query error: {}", e);
-        Err(e)
-    });
+    let tenant_repository = TenantRepository::new(&pool).await;
+    let tenant = Tenant::new(&tenant_repository).await;
 
-    let results = match results {
-        Ok(Some(res)) => res,
-        Ok(None) => {
-            return Ok(Json(LinkTenantAccountResponse {
-                is_success: false,
-                message_code: Some("nana".to_string()),
-            }))
-        }
-        Err(_) => {
-            return Ok(Json(LinkTenantAccountResponse {
-                is_success: false,
-                message_code: Some("nana".to_string()),
-            }))
-        }
-    };
+    let link_resp = tenant.link_account(link_tenant.tenant_id, by_account_id.clone()).await;
+    if link_resp.is_err() {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
     let response = LinkTenantAccountResponse {
         is_success: true,
         message_code: None,
