@@ -77,8 +77,9 @@ struct CreateTenantResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-struct MakeMagicRequest {
+struct ApplyEntitySchemaRequest {
     tenant_id: Uuid,
+    schema: Value,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -273,10 +274,10 @@ async fn link_tenant_account(
     Ok(Json(response))
 }
 
-async fn make_magic(
+async fn apply_entity_schema_sync(
     auth: TypedHeader<Authorization<Bearer>>,
     State(pool): State<DbPool>,
-    Json(req): Json<MakeMagicRequest>,
+    Json(req): Json<ApplyEntitySchemaRequest>,
 ) -> Result<String, StatusCode> {
     let auth_response = ensure_header_authentification(auth, &pool).await;
     if auth_response.is_err() {
@@ -297,20 +298,7 @@ async fn make_magic(
 
     let empty = EntityJsonSchema::new();
 
-    let js = json!({
-        "type": "object",
-        "properties": {
-            "timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
-            "name": { "type": "string", "x-manyevents-ch-type": "String" },
-            "age": { "type": "integer", "x-manyevents-ch-type": "Int32" },
-            "big_age": { "type": "integer", "x-manyevents-ch-type": "Int64" },
-        },
-        "x-manyevents-ch-order-by": "timestamp",
-        "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
-        "x-manyevents-ch-partition-by": "timestamp",
-        "required": ["name", "age"]
-    });
-    let new: Result<EntityJsonSchema, _> = serde_json::from_value(js);
+    let new: Result<EntityJsonSchema, _> = serde_json::from_value(req.schema);
     if new.is_err() {
         println!("EntityJsonSchema parser failed {:?}", new);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -407,7 +395,7 @@ async fn routes_app() -> Router<()> {
             "/api/manage/v1/link-tenant-account",
             post(link_tenant_account),
         )
-        .route("/api/manage/v1/make-magic", post(make_magic))
+        .route("/api/manage/v0-unstable/apply-entity-schema-sync", post(apply_entity_schema_sync))
         .with_state(pool);
 
     router
@@ -816,8 +804,20 @@ pub mod test {
         let tenant =
             create_tenant("test-tenant".to_string(), bearer.clone(), &app).await;
 
-        let req = MakeMagicRequest{
+        let req = ApplyEntitySchemaRequest{
             tenant_id: tenant.id.unwrap(),
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
+                    "base_name": { "type": "string", "x-manyevents-ch-type": "String" },
+                    "base_age": { "type": "integer", "x-manyevents-ch-type": "Int32" },
+                    "base_big_age": { "type": "integer", "x-manyevents-ch-type": "Int64" },
+                },
+                "x-manyevents-ch-order-by": "base_timestamp",
+                "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
+                "x-manyevents-ch-partition-by": "base_timestamp",
+            }),
         };
         let request_str = serde_json::to_string(&req).unwrap();
 
@@ -828,7 +828,7 @@ pub mod test {
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", bearer))
-                    .uri("/api/manage/v1/make-magic")
+                    .uri("/api/manage/v0-unstable/apply-entity-schema-sync")
                     .body(Body::from(request_str))
                     .unwrap(),
             )

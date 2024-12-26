@@ -217,17 +217,6 @@ impl ClickHouseRepository {
             .query(raw_query.as_str())
             .bind(Identifier(table_name.as_str()));
 
-        // for arg in args {
-        //     query = query
-        //         .bind(Identifier(arg.0.as_str()))
-        //         .bind(arg.1.as_str());
-        //     println!("Binded {} {},", arg.0.as_str(), arg.1.as_str());
-        // }
-
-        // query = query
-        //     .bind(Identifier(order_by.clone().unwrap().as_str()))
-        //     .bind(Identifier(order_by.clone().unwrap().as_str()));
-
         let exec = query.execute().await;
 
         if exec.is_err() {
@@ -488,6 +477,7 @@ pub mod test {
     #[rstest]
     fn diff_entities_same_schema() {
         let mut the_same = EntityJsonSchema::new();
+        the_same.x_manyevents_ch_order_by = "name".to_string();
         the_same.properties = HashMap::from([(
             "name".to_string(),
             JsonSchemaProperty {
@@ -504,6 +494,7 @@ pub mod test {
     fn diff_entities_new_field() {
         let empty = EntityJsonSchema::new();
         let mut new = EntityJsonSchema::new();
+        new.x_manyevents_ch_order_by = "name".to_string();
         new.properties = HashMap::from([(
             "name".to_string(),
             JsonSchemaProperty {
