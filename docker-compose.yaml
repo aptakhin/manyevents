@@ -5,9 +5,6 @@ services:
     ports:
       - "8123:8123"
       - "9000:9000"
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
-      - clickhouse_config:/etc/clickhouse-server
     restart: unless-stopped
     environment:
       CLICKHOUSE_DB: manyevents

@@ -70,11 +70,6 @@ impl Proto {
 pub mod test {
     use super::*;
     use crate::test::{add_random_email_account, pool};
-    use axum::{
-        body::Body,
-        http::{self, Request, StatusCode},
-    };
-    use hex::encode;
     use rstest::{fixture, rstest};
 
     #[rstest]

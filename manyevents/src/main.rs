@@ -2,7 +2,7 @@ use axum::{
     async_trait,
     body::Bytes,
     extract::{Form, FromRequest, Request, State},
-    http::{request::Parts, StatusCode},
+    http::{StatusCode},
     response::{Html, IntoResponse, Redirect, Response},
     routing::get,
     routing::post,
@@ -42,7 +42,7 @@ use crate::auth::{
 use crate::ch::{insert_smth, ChColumn, make_migration_plan, ClickHouseRepository};
 use crate::schema::{read_event_data, EntityJsonSchema, JsonSchemaProperty};
 use crate::tenant::{Tenant, TenantRepository};
-use std::collections::HashMap;
+use crate::scope::ScopeRepository;
 
 type DbPool = PgPool;
 
@@ -294,10 +294,39 @@ async fn apply_entity_schema_sync(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
+    let unique_suffix = format!("{}", req.tenant_id.clone().as_simple());
+
     let repo = ClickHouseRepository::new("clickhouse://...".to_string());
 
-    let empty = EntityJsonSchema::new();
+    let cred = repo
+        .create_credential(unique_suffix.clone(), "my_password".to_string())
+        .await;
 
+    println!("Unique_suffix {}", unique_suffix.clone());
+
+    assert!(cred.is_ok());
+    let cred = cred.unwrap();
+
+    let scope = ScopeRepository::new(&pool);
+
+    if !scope.has_tenant_storage_credential(req.tenant_id.clone()).await {
+        let storage_credential_resp = scope
+            .create_storage_credential(
+                req.tenant_id.clone(),
+                "clickhouse".to_string(),
+                cred.to_dsn(),
+                by_account_id.clone(),
+            )
+            .await;
+        if storage_credential_resp.is_err() {
+            println!("storage_credential_resp {:?}", storage_credential_resp);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    let tenant_repo = ClickHouseRepository::choose_tenant(unique_suffix.clone());
+
+    let empty = EntityJsonSchema::new();
     let new: Result<EntityJsonSchema, _> = serde_json::from_value(req.schema);
     if new.is_err() {
         println!("EntityJsonSchema parser failed {:?}", new);
@@ -305,10 +334,10 @@ async fn apply_entity_schema_sync(
     }
     let new = new.unwrap();
 
-    let unique_table_name = "magic_table".to_string();
+    let unique_table_name = "entity".to_string();
 
     let migration_plan = make_migration_plan(empty, new);
-    let migration = repo
+    let migration = tenant_repo
         .execute_init_migration(unique_table_name.clone(), migration_plan, true)
         .await;
 
@@ -829,7 +858,23 @@ pub mod test {
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", bearer))
                     .uri("/api/manage/v0-unstable/apply-entity-schema-sync")
-                    .body(Body::from(request_str))
+                    .body(Body::from(request_str.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", bearer))
+                    .uri("/api/manage/v0-unstable/apply-entity-schema-sync")
+                    .body(Body::from(request_str.clone()))
                     .unwrap(),
             )
             .await

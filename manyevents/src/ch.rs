@@ -85,6 +85,12 @@ pub struct ClickHouseTenantCredential {
     pub db_password: String,
 }
 
+impl ClickHouseTenantCredential {
+    pub fn to_dsn(&self) -> String {
+        format!("clickhouse://{}:{}@{}/{}", self.db_user, self.db_password, "localhost:8123", self.db_name)
+    }
+}
+
 pub struct ClickHouseRepository {
     client: Client,
 }
@@ -94,6 +100,19 @@ impl ClickHouseRepository {
         let client = Client::default()
             .with_url("http://localhost:8123")
             .with_database("manyevents")
+            .with_user("username")
+            .with_password("password")
+            .with_option("async_insert", "1")
+            .with_option("wait_for_async_insert", "0");
+
+        ClickHouseRepository { client }
+    }
+
+    pub fn choose_tenant(unique_suffix: String) -> ClickHouseRepository {
+        let db_name = format!("db_{}", unique_suffix);
+        let client = Client::default()
+            .with_url("http://localhost:8123")
+            .with_database(db_name.as_str())
             .with_user("username")
             .with_password("password")
             .with_option("async_insert", "1")
@@ -355,11 +374,6 @@ pub fn make_migration_plan(from: EntityJsonSchema, to: EntityJsonSchema) -> ChTa
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use axum::{
-        body::Body,
-        http::{self, Request, StatusCode},
-    };
-    use hex::encode;
     use rstest::{fixture, rstest};
 
     #[fixture]

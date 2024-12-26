@@ -1,5 +1,6 @@
 use crate::DbPool;
 use uuid::Uuid;
+use std::error::Error;
 
 pub struct ScopeRepository<'a> {
     pool: &'a DbPool,
@@ -60,6 +61,25 @@ impl<'a> ScopeRepository<'a> {
             println!("Database query error: {}", e);
             Err(())
         })
+    }
+
+    pub async fn has_tenant_storage_credential(
+        &self,
+        tenant_id: Uuid,
+    ) -> bool {
+        sqlx::query_as(
+            "
+            SELECT id FROM storage_credential
+            WHERE
+                tenant_id = $1
+            LIMIT 1
+            ",
+        )
+        .bind(tenant_id)
+        .fetch_optional(self.pool)
+        .await
+        .and_then(|r: Option<(Uuid,)>| Ok(r.is_some()))
+        .expect("SQL error in has_tenant_storage_credential")
     }
 
     pub async fn create_scope_environment(
