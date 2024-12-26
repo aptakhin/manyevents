@@ -659,7 +659,7 @@ pub mod test {
     #[rstest]
     #[tokio::test]
     async fn test_link_tenant_401_wrong_tenant(#[future] app: Router<()>, #[future] pool: DbPool) {
-        // Create account1 and tenant1, but attempt to give access of user unrelated to tenant
+        // Create account1 and tenant1, but attempt to give access from the user unrelated to tenant
         let app = app.await;
         let pool = pool.await;
         let api_auth_repository = ApiAuthRepository { pool: &pool };
@@ -695,7 +695,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
-    async fn test_push_event(#[future] app: Router<()>) {
+    async fn test_push_component_event(#[future] app: Router<()>) {
         let push_request_str = r#"{
             "event": {
                 "units": [
