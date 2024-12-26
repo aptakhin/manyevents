@@ -295,9 +295,7 @@ async fn make_magic(
 
     let repo = ClickHouseRepository::new("clickhouse://...".to_string());
 
-    let empty = JsonSchemaEntity {
-        properties: HashMap::new(),
-    };
+    let empty = JsonSchemaEntity::new();
 
     let js = json!({
         "type": "object",
@@ -308,7 +306,8 @@ async fn make_magic(
             "big_age": { "type": "integer", "x-manyevents-ch-type": "Int64" },
         },
         "x-manyevents-ch-order-by": "timestamp",
-        "x-manyevents-ch-partition-by": "toYYYYMMDD(timestamp)",
+        "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
+        "x-manyevents-ch-partition-by": "timestamp",
         "required": ["name", "age"]
     });
     let new: Result<JsonSchemaEntity, _> = serde_json::from_value(js);

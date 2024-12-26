@@ -79,7 +79,7 @@ pub fn read_event_data(event_root: &Value) -> Result<Event, EventError> {
             }
             let column_name = key.to_string();
 
-            let mut set_value = SerializationType::Str("".to_string());
+            let mut set_value = SerializationType::Str(String::new());
             if v.is_i64() {
                 set_value = SerializationType::Int(v.as_i64().unwrap());
             } else if v.is_f64() {
@@ -111,8 +111,41 @@ pub struct JsonSchemaProperty {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JsonSchemaEntity {
+pub struct JsonSchemaComponent {
     pub properties: HashMap<String, JsonSchemaProperty>,
+}
+
+impl JsonSchemaComponent {
+    pub fn new() -> JsonSchemaComponent {
+        JsonSchemaComponent {
+            properties: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct JsonSchemaEntity {
+    #[serde(rename = "x-manyevents-ch-order-by")]
+    pub x_manyevents_ch_order_by: String,
+
+    #[serde(rename = "x-manyevents-ch-partition-by")]
+    pub x_manyevents_ch_partition_by: String,
+
+    #[serde(rename = "x-manyevents-ch-partition-by-func")]
+    pub x_manyevents_ch_partition_by_func: Option<String>,
+
+    pub properties: HashMap<String, JsonSchemaProperty>,
+}
+
+impl JsonSchemaEntity {
+    pub fn new() -> JsonSchemaEntity {
+        JsonSchemaEntity {
+            x_manyevents_ch_order_by: String::new(),
+            x_manyevents_ch_partition_by: String::new(),
+            x_manyevents_ch_partition_by_func: None,
+            properties: HashMap::new(),
+        }
+    }
 }
 
 pub fn validate_json_example() {
@@ -185,25 +218,51 @@ pub mod test {
         let js = json!({
             "type": "object",
             "properties": {
-                "name": { "type": "string", "x-manyevents-ch-type": "String" },
-                "age": { "type": "integer", "x-manyevents-ch-type": "Int32" },
+                "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
+                "base_name": { "type": "string", "x-manyevents-ch-type": "String" },
             },
-            "required": ["name", "age"]
+            "x-manyevents-ch-order-by": "timestamp",
+            "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
+            "x-manyevents-ch-partition-by": "timestamp",
+            "required": ["base_timestamp", "base_name"]
         });
 
         let entity: Result<JsonSchemaEntity, _> = serde_json::from_value(js);
 
         assert!(entity.is_ok());
         let entity = entity.unwrap();
+        assert_eq!(entity.properties["base_timestamp"].type_, "integer".to_string());
+        assert_eq!(
+            entity.properties["base_timestamp"].x_manyevents_ch_type,
+            "DateTime64(3)".to_string()
+        );
+        assert_eq!(entity.properties["base_name"].type_, "string".to_string());
+        assert_eq!(
+            entity.properties["base_name"].x_manyevents_ch_type,
+            "String".to_string()
+        );
+        assert_eq!(entity.x_manyevents_ch_order_by, "timestamp".to_string());
+        assert_eq!(entity.x_manyevents_ch_partition_by, "timestamp".to_string());
+        assert_eq!(entity.x_manyevents_ch_partition_by_func, Some("toYYYYMMDD".to_string()));
+    }
+
+    #[rstest]
+    fn parse_component_json_schema_successfully() {
+        let js = json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "x-manyevents-ch-type": "String" },
+            },
+        });
+
+        let entity: Result<JsonSchemaComponent, _> = serde_json::from_value(js);
+
+        assert!(entity.is_ok());
+        let entity = entity.unwrap();
         assert_eq!(entity.properties["name"].type_, "string".to_string());
         assert_eq!(
             entity.properties["name"].x_manyevents_ch_type,
-            "String".to_string()
-        );
-        assert_eq!(entity.properties["age"].type_, "integer".to_string());
-        assert_eq!(
-            entity.properties["age"].x_manyevents_ch_type,
-            "Int32".to_string()
+            "String".to_string(),
         );
     }
 }

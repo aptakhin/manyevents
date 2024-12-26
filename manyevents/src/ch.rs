@@ -347,8 +347,13 @@ pub fn make_migration_plan(from: JsonSchemaEntity, to: JsonSchemaEntity) -> ChTa
     let mut order_by = ChColumnMigrationStatus::NoChange;
     let mut partition_by = ChColumnMigrationStatus::NoChange;
     if from.properties.len() == 0 && to.properties.len() != 0 {
-        order_by = ChColumnMigrationStatus::Added("timestamp".to_string());
-        partition_by = ChColumnMigrationStatus::Added("timestamp".to_string());
+        order_by = ChColumnMigrationStatus::Added(to.x_manyevents_ch_order_by);
+
+        let mut partition_by_value = to.x_manyevents_ch_partition_by;
+        if to.x_manyevents_ch_partition_by_func.is_some() {
+            partition_by_value = format!("{}({})", to.x_manyevents_ch_partition_by_func.unwrap(), partition_by_value);
+        }
+        partition_by = ChColumnMigrationStatus::Added(partition_by_value);
     }
 
     ChTableMigration {
@@ -482,15 +487,14 @@ pub mod test {
 
     #[rstest]
     fn diff_entities_same_schema() {
-        let the_same = JsonSchemaEntity {
-            properties: HashMap::from([(
-                "name".to_string(),
-                JsonSchemaProperty {
-                    type_: "string".to_string(),
-                    x_manyevents_ch_type: "String".to_string(),
-                },
-            )]),
-        };
+        let mut the_same = JsonSchemaEntity::new();
+        the_same.properties = HashMap::from([(
+            "name".to_string(),
+            JsonSchemaProperty {
+                type_: "string".to_string(),
+                x_manyevents_ch_type: "String".to_string(),
+            },
+        )]);
 
         let migration_plan = make_migration_plan(the_same.clone(), the_same.clone());
         assert_eq!(migration_plan.columns.len(), 0);
@@ -498,18 +502,15 @@ pub mod test {
 
     #[rstest]
     fn diff_entities_new_field() {
-        let empty = JsonSchemaEntity {
-            properties: HashMap::new(),
-        };
-        let new = JsonSchemaEntity {
-            properties: HashMap::from([(
-                "name".to_string(),
-                JsonSchemaProperty {
-                    type_: "string".to_string(),
-                    x_manyevents_ch_type: "String".to_string(),
-                },
-            )]),
-        };
+        let empty = JsonSchemaEntity::new();
+        let mut new = JsonSchemaEntity::new();
+        new.properties = HashMap::from([(
+            "name".to_string(),
+            JsonSchemaProperty {
+                type_: "string".to_string(),
+                x_manyevents_ch_type: "String".to_string(),
+            },
+        )]);
 
         let migration_plan = make_migration_plan(empty, new);
         assert_eq!(migration_plan.columns.len(), 1);
@@ -517,24 +518,24 @@ pub mod test {
 
     #[rstest]
     fn diff_entities_schema_changed_type() {
-        let old = JsonSchemaEntity {
-            properties: HashMap::from([(
-                "name".to_string(),
-                JsonSchemaProperty {
-                    type_: "string".to_string(),
-                    x_manyevents_ch_type: "String".to_string(),
-                },
-            )]),
-        };
-        let new = JsonSchemaEntity {
-            properties: HashMap::from([(
-                "name".to_string(),
-                JsonSchemaProperty {
-                    type_: "integer".to_string(),
-                    x_manyevents_ch_type: "Int64".to_string(),
-                },
-            )]),
-        };
+        let mut old = JsonSchemaEntity::new();
+        old.x_manyevents_ch_order_by = "name".to_string();
+        old.properties = HashMap::from([(
+            "name".to_string(),
+            JsonSchemaProperty {
+                type_: "string".to_string(),
+                x_manyevents_ch_type: "String".to_string(),
+            },
+        )]);
+        let mut new = JsonSchemaEntity::new();
+        new.x_manyevents_ch_order_by = "name".to_string();
+        new.properties = HashMap::from([(
+            "name".to_string(),
+            JsonSchemaProperty {
+                type_: "integer".to_string(),
+                x_manyevents_ch_type: "Int64".to_string(),
+            },
+        )]);
 
         let migration_plan = make_migration_plan(old, new);
 
