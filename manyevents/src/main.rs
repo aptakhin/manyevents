@@ -30,7 +30,6 @@ use uuid::Uuid;
 
 mod auth;
 mod ch;
-mod proto;
 mod schema;
 mod scope;
 mod tenant;
