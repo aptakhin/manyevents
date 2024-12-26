@@ -10,19 +10,20 @@ services:
       - clickhouse_config:/etc/clickhouse-server
     restart: unless-stopped
     environment:
-      CLICKHOUSE_DB: my_database
+      CLICKHOUSE_DB: manyevents
       CLICKHOUSE_USER: username
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
       CLICKHOUSE_PASSWORD: password
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
 
   postgres:
     image: postgres:17
     container_name: postgres
     restart: unless-stopped
     environment:
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_USER: postgres
       POSTGRES_DB: manyevents
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+
     ports:
       - 5432:5432
 

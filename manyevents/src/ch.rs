@@ -19,9 +19,9 @@ pub struct ChColumn {
 pub async fn insert_smth(table_name: String, rows: Vec<ChColumn>) {
     let client = Client::default()
         .with_url("http://localhost:8123")
+        .with_database("manyevents")
         .with_user("username")
         .with_password("password")
-        .with_database("helloworld")
         // https://clickhouse.com/docs/en/operations/settings/settings#async-insert
         .with_option("async_insert", "1")
         // https://clickhouse.com/docs/en/operations/settings/settings#wait-for-async-insert
@@ -93,9 +93,9 @@ impl ClickHouseRepository {
     pub fn new(dsn: String) -> ClickHouseRepository {
         let client = Client::default()
             .with_url("http://localhost:8123")
+            .with_database("manyevents")
             .with_user("username")
             .with_password("password")
-            .with_database("helloworld")
             .with_option("async_insert", "1")
             .with_option("wait_for_async_insert", "0");
 
@@ -160,6 +160,27 @@ impl ClickHouseRepository {
         migration_plan: ChTableMigration,
         or_replace: bool,
     ) -> Result<(), ()> {
+        // order by, partition by
+        let order_by: Result<String, ()> = match migration_plan.order_by {
+            ChColumnMigrationStatus::Added(new) => Ok(new),
+            _ => Err(()),
+        };
+        if order_by.is_err() {
+            println!("Error order_by for query!");
+            return Err(());
+        }
+        let order_by = order_by.unwrap();
+
+        let partition_by: Result<String, ()> = match migration_plan.partition_by {
+            ChColumnMigrationStatus::Added(new) => Ok(new),
+            _ => Err(()),
+        };
+        if partition_by.is_err() {
+            println!("Error partition_by for query!");
+            return Err(());
+        }
+        let partition_by = partition_by.unwrap();
+
         let mut args: Vec<(String, String)> = vec![];
 
         for column in migration_plan.columns {
@@ -175,18 +196,20 @@ impl ClickHouseRepository {
             }
         }
         let or_replace_str = if or_replace { "OR REPLACE " } else { "" };
-        let placeholders_str = args.iter().map(|_| "? ?").collect::<Vec<_>>().join(", ");
+        let columns_str = args.iter().map(|(name, type_)| format!("{} {}", name, type_)).collect::<Vec<_>>().join(", ");
         let raw_query = format!(
         "
         CREATE {}TABLE ? (
             {}
         )
         ENGINE = MergeTree
-        ORDER BY ?
-        PARTITION BY ?
+        ORDER BY {}
+        PARTITION BY {}
         ",
             or_replace_str,
-            placeholders_str,
+            columns_str,
+            order_by,
+            partition_by,
         );
 
         let mut query = self
@@ -194,30 +217,21 @@ impl ClickHouseRepository {
             .query(raw_query.as_str())
             .bind(Identifier(table_name.as_str()));
 
-        for arg in args {
-            query = query
-                .bind(Identifier(arg.0.as_str()))
-                .bind(Identifier(arg.1.as_str()));
-        }
+        // for arg in args {
+        //     query = query
+        //         .bind(Identifier(arg.0.as_str()))
+        //         .bind(arg.1.as_str());
+        //     println!("Binded {} {},", arg.0.as_str(), arg.1.as_str());
+        // }
 
-        // order by, partition by
-        let order_by: Result<String, ()> = match migration_plan.order_by {
-            ChColumnMigrationStatus::Added(new) => Ok(new),
-            _ => Err(()),
-        };
-        if order_by.is_err() {
-            println!("Error order_by for query!");
-            return Err(());
-        }
-
-        query = query
-            .bind(Identifier(order_by.clone().unwrap().as_str()))
-            .bind(Identifier(order_by.clone().unwrap().as_str()));
+        // query = query
+        //     .bind(Identifier(order_by.clone().unwrap().as_str()))
+        //     .bind(Identifier(order_by.clone().unwrap().as_str()));
 
         let exec = query.execute().await;
 
         if exec.is_err() {
-            println!("Migration {:?}", exec);
+            println!("Migration {:?}/Query: {}", exec, raw_query.as_str());
             return Err(());
         }
 
@@ -252,11 +266,7 @@ impl ClickHouseRepository {
         for arg in args {
             let mut query = self
                 .client
-                .query(
-                    "
-                ALTER TABLE ? ADD COLUMN ? ?
-                ",
-                )
+                .query("ALTER TABLE ? ADD COLUMN ? ?")
                 .bind(Identifier(table_name.as_str()))
                 .bind(Identifier(arg.0.as_str()))
                 .bind(Identifier(arg.1.as_str()));
@@ -308,8 +318,8 @@ pub struct ChColumnMigration {
 pub struct ChTableMigration {
     pub columns: Vec<ChColumnMigration>,
     pub order_by: ChColumnMigrationStatus<String>,
+    pub partition_by: ChColumnMigrationStatus<String>,
 }
-
 
 pub fn make_migration_plan(from: JsonSchemaEntity, to: JsonSchemaEntity) -> ChTableMigration {
     let mut columns: Vec<ChColumnMigration> = vec![];
@@ -335,13 +345,16 @@ pub fn make_migration_plan(from: JsonSchemaEntity, to: JsonSchemaEntity) -> ChTa
     }
 
     let mut order_by = ChColumnMigrationStatus::NoChange;
+    let mut partition_by = ChColumnMigrationStatus::NoChange;
     if from.properties.len() == 0 && to.properties.len() != 0 {
-        order_by = ChColumnMigrationStatus::Added("name".to_string());
+        order_by = ChColumnMigrationStatus::Added("timestamp".to_string());
+        partition_by = ChColumnMigrationStatus::Added("timestamp".to_string());
     }
 
     ChTableMigration {
-        columns: columns,
-        order_by: order_by,
+        columns,
+        order_by,
+        partition_by,
     }
 }
 
@@ -399,6 +412,7 @@ pub mod test {
     ) {
         let migration_plan = ChTableMigration {
             order_by: ChColumnMigrationStatus::Added("name".to_string()),
+            partition_by: ChColumnMigrationStatus::Added("name".to_string()),
             columns: vec![
                 ChColumnMigration {
                     name: "name".to_string(),
@@ -431,6 +445,7 @@ pub mod test {
     ) {
         let migration_plan = ChTableMigration {
             order_by: ChColumnMigrationStatus::Added("name".to_string()),
+            partition_by: ChColumnMigrationStatus::Added("name".to_string()),
             columns: vec![ChColumnMigration {
                 name: "name".to_string(),
                 type_: ChColumnMigrationStatus::Added("String".to_string()),
@@ -447,6 +462,7 @@ pub mod test {
         );
         let migration_plan_2 = ChTableMigration {
             order_by: ChColumnMigrationStatus::NoChange,
+            partition_by: ChColumnMigrationStatus::NoChange,
             columns: vec![ChColumnMigration {
                 name: "age".to_string(),
                 type_: ChColumnMigrationStatus::Added("Int64".to_string()),

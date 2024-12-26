@@ -302,9 +302,13 @@ async fn make_magic(
     let js = json!({
         "type": "object",
         "properties": {
+            "timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
             "name": { "type": "string", "x-manyevents-ch-type": "String" },
             "age": { "type": "integer", "x-manyevents-ch-type": "Int32" },
+            "big_age": { "type": "integer", "x-manyevents-ch-type": "Int64" },
         },
+        "x-manyevents-ch-order-by": "timestamp",
+        "x-manyevents-ch-partition-by": "toYYYYMMDD(timestamp)",
         "required": ["name", "age"]
     });
     let new: Result<JsonSchemaEntity, _> = serde_json::from_value(js);
@@ -314,7 +318,7 @@ async fn make_magic(
     }
     let new = new.unwrap();
 
-    let unique_table_name = "table_xd".to_string();
+    let unique_table_name = "magic_table".to_string();
 
     let migration_plan = make_migration_plan(empty, new);
     let migration = repo
@@ -326,7 +330,7 @@ async fn make_magic(
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    Ok("xxx".to_string())
+    Ok("OK".to_string())
 }
 
 async fn push_event(BufferRequestBody(body): BufferRequestBody) -> Json<PushEventResponse> {
