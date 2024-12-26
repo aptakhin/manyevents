@@ -2,7 +2,7 @@ use axum::{
     async_trait,
     body::Bytes,
     extract::{Form, FromRequest, Request, State},
-    http::{StatusCode},
+    http::StatusCode,
     response::{Html, IntoResponse, Redirect, Response},
     routing::get,
     routing::post,
@@ -38,10 +38,10 @@ use crate::auth::{
     ensure_header_authentification, Account, AccountActionOnTenant, AccountRepository, ApiAuth,
     ApiAuthRepository, Authentificated,
 };
-use crate::ch::{insert_smth, ChColumn, make_migration_plan, ClickHouseRepository};
+use crate::ch::{insert_smth, make_migration_plan, ChColumn, ClickHouseRepository};
 use crate::schema::{read_event_data, EntityJsonSchema, JsonSchemaProperty};
-use crate::tenant::{Tenant, TenantRepository};
 use crate::scope::ScopeRepository;
+use crate::tenant::{Tenant, TenantRepository};
 
 type DbPool = PgPool;
 
@@ -308,7 +308,10 @@ async fn apply_entity_schema_sync(
 
     let scope = ScopeRepository::new(&pool);
 
-    if !scope.has_tenant_storage_credential(req.tenant_id.clone()).await {
+    if !scope
+        .has_tenant_storage_credential(req.tenant_id.clone())
+        .await
+    {
         let storage_credential_resp = scope
             .create_storage_credential(
                 req.tenant_id.clone(),
@@ -423,7 +426,10 @@ async fn routes_app() -> Router<()> {
             "/api/manage/v1/link-tenant-account",
             post(link_tenant_account),
         )
-        .route("/api/manage/v0-unstable/apply-entity-schema-sync", post(apply_entity_schema_sync))
+        .route(
+            "/api/manage/v0-unstable/apply-entity-schema-sync",
+            post(apply_entity_schema_sync),
+        )
         .with_state(pool);
 
     router
@@ -829,10 +835,9 @@ pub mod test {
         let account = add_random_email_account(&pool).await;
         let auth_token = ApiAuth::create_new(account, &api_auth_repository).await;
         let bearer = auth_token.unwrap().token;
-        let tenant =
-            create_tenant("test-tenant".to_string(), bearer.clone(), &app).await;
+        let tenant = create_tenant("test-tenant".to_string(), bearer.clone(), &app).await;
 
-        let req = ApplyEntitySchemaRequest{
+        let req = ApplyEntitySchemaRequest {
             tenant_id: tenant.id.unwrap(),
             schema: json!({
                 "type": "object",

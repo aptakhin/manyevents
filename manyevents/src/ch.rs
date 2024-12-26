@@ -5,10 +5,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::schema::{
-    JsonSchemaProperty, EntityJsonSchema,
-    SerializationType,
-};
+use crate::schema::{EntityJsonSchema, JsonSchemaProperty, SerializationType};
 
 #[derive(Row, Deserialize, Debug)]
 pub struct ChColumn {
@@ -87,7 +84,10 @@ pub struct ClickHouseTenantCredential {
 
 impl ClickHouseTenantCredential {
     pub fn to_dsn(&self) -> String {
-        format!("clickhouse://{}:{}@{}/{}", self.db_user, self.db_password, "localhost:8123", self.db_name)
+        format!(
+            "clickhouse://{}:{}@{}/{}",
+            self.db_user, self.db_password, "localhost:8123", self.db_name
+        )
     }
 }
 
@@ -215,9 +215,13 @@ impl ClickHouseRepository {
             }
         }
         let or_replace_str = if or_replace { "OR REPLACE " } else { "" };
-        let columns_str = args.iter().map(|(name, type_)| format!("{} {}", name, type_)).collect::<Vec<_>>().join(", ");
+        let columns_str = args
+            .iter()
+            .map(|(name, type_)| format!("{} {}", name, type_))
+            .collect::<Vec<_>>()
+            .join(", ");
         let raw_query = format!(
-        "
+            "
         CREATE {}TABLE ? (
             {}
         )
@@ -225,10 +229,7 @@ impl ClickHouseRepository {
         ORDER BY {}
         PARTITION BY {}
         ",
-            or_replace_str,
-            columns_str,
-            order_by,
-            partition_by,
+            or_replace_str, columns_str, order_by, partition_by,
         );
 
         let mut query = self
@@ -346,7 +347,10 @@ pub fn make_migration_plan(from: EntityJsonSchema, to: EntityJsonSchema) -> ChTa
             if to_property.x_manyevents_ch_type != from_property.x_manyevents_ch_type {
                 columns.push(ChColumnMigration {
                     name: name.clone(),
-                    type_: ChColumnMigrationStatus::Changed(from_property.x_manyevents_ch_type.clone(), to_property.x_manyevents_ch_type.clone()),
+                    type_: ChColumnMigrationStatus::Changed(
+                        from_property.x_manyevents_ch_type.clone(),
+                        to_property.x_manyevents_ch_type.clone(),
+                    ),
                 })
             }
         }
@@ -359,7 +363,11 @@ pub fn make_migration_plan(from: EntityJsonSchema, to: EntityJsonSchema) -> ChTa
 
         let mut partition_by_value = to.x_manyevents_ch_partition_by;
         if to.x_manyevents_ch_partition_by_func.is_some() {
-            partition_by_value = format!("{}({})", to.x_manyevents_ch_partition_by_func.unwrap(), partition_by_value);
+            partition_by_value = format!(
+                "{}({})",
+                to.x_manyevents_ch_partition_by_func.unwrap(),
+                partition_by_value
+            );
         }
         partition_by = ChColumnMigrationStatus::Added(partition_by_value);
     }

@@ -1,6 +1,6 @@
 use crate::DbPool;
-use uuid::Uuid;
 use std::error::Error;
+use uuid::Uuid;
 
 pub struct ScopeRepository<'a> {
     pool: &'a DbPool,
@@ -63,10 +63,7 @@ impl<'a> ScopeRepository<'a> {
         })
     }
 
-    pub async fn has_tenant_storage_credential(
-        &self,
-        tenant_id: Uuid,
-    ) -> bool {
+    pub async fn has_tenant_storage_credential(&self, tenant_id: Uuid) -> bool {
         sqlx::query_as(
             "
             SELECT id FROM storage_credential

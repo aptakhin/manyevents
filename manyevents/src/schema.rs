@@ -151,7 +151,7 @@ impl EntityJsonSchema {
 pub fn validate_json_example() {
     use jsonschema::{Retrieve, Uri};
     use serde_json::{json, Value};
-    use std::{collections::HashMap, sync::Arc};
+    use std::collections::HashMap;
 
     struct InMemoryRetriever {
         schemas: HashMap<String, Value>,
@@ -231,7 +231,10 @@ pub mod test {
 
         assert!(entity.is_ok());
         let entity = entity.unwrap();
-        assert_eq!(entity.properties["base_timestamp"].type_, "integer".to_string());
+        assert_eq!(
+            entity.properties["base_timestamp"].type_,
+            "integer".to_string()
+        );
         assert_eq!(
             entity.properties["base_timestamp"].x_manyevents_ch_type,
             "DateTime64(3)".to_string()
@@ -243,7 +246,10 @@ pub mod test {
         );
         assert_eq!(entity.x_manyevents_ch_order_by, "timestamp".to_string());
         assert_eq!(entity.x_manyevents_ch_partition_by, "timestamp".to_string());
-        assert_eq!(entity.x_manyevents_ch_partition_by_func, Some("toYYYYMMDD".to_string()));
+        assert_eq!(
+            entity.x_manyevents_ch_partition_by_func,
+            Some("toYYYYMMDD".to_string())
+        );
     }
 
     #[rstest]
