@@ -40,7 +40,7 @@ use crate::auth::{
     ApiAuthRepository, Authentificated,
 };
 use crate::ch::{insert_smth, ChColumn, make_migration_plan, ClickHouseRepository};
-use crate::schema::{read_event_data, JsonSchemaEntity, JsonSchemaProperty};
+use crate::schema::{read_event_data, EntityJsonSchema, JsonSchemaProperty};
 use crate::tenant::{Tenant, TenantRepository};
 use std::collections::HashMap;
 
@@ -295,7 +295,7 @@ async fn make_magic(
 
     let repo = ClickHouseRepository::new("clickhouse://...".to_string());
 
-    let empty = JsonSchemaEntity::new();
+    let empty = EntityJsonSchema::new();
 
     let js = json!({
         "type": "object",
@@ -310,9 +310,9 @@ async fn make_magic(
         "x-manyevents-ch-partition-by": "timestamp",
         "required": ["name", "age"]
     });
-    let new: Result<JsonSchemaEntity, _> = serde_json::from_value(js);
+    let new: Result<EntityJsonSchema, _> = serde_json::from_value(js);
     if new.is_err() {
-        println!("JsonSchemaEntity parser failed {:?}", new);
+        println!("EntityJsonSchema parser failed {:?}", new);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
     let new = new.unwrap();

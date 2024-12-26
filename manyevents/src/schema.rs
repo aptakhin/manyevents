@@ -111,20 +111,20 @@ pub struct JsonSchemaProperty {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JsonSchemaComponent {
+pub struct ComponentJsonSchema {
     pub properties: HashMap<String, JsonSchemaProperty>,
 }
 
-impl JsonSchemaComponent {
-    pub fn new() -> JsonSchemaComponent {
-        JsonSchemaComponent {
+impl ComponentJsonSchema {
+    pub fn new() -> ComponentJsonSchema {
+        ComponentJsonSchema {
             properties: HashMap::new(),
         }
     }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JsonSchemaEntity {
+pub struct EntityJsonSchema {
     #[serde(rename = "x-manyevents-ch-order-by")]
     pub x_manyevents_ch_order_by: String,
 
@@ -137,9 +137,9 @@ pub struct JsonSchemaEntity {
     pub properties: HashMap<String, JsonSchemaProperty>,
 }
 
-impl JsonSchemaEntity {
-    pub fn new() -> JsonSchemaEntity {
-        JsonSchemaEntity {
+impl EntityJsonSchema {
+    pub fn new() -> EntityJsonSchema {
+        EntityJsonSchema {
             x_manyevents_ch_order_by: String::new(),
             x_manyevents_ch_partition_by: String::new(),
             x_manyevents_ch_partition_by_func: None,
@@ -214,7 +214,7 @@ pub mod test {
     }
 
     #[rstest]
-    fn parse_json_schema_successfully() {
+    fn parse_entity_json_schema_successfully() {
         let js = json!({
             "type": "object",
             "properties": {
@@ -224,10 +224,10 @@ pub mod test {
             "x-manyevents-ch-order-by": "timestamp",
             "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
             "x-manyevents-ch-partition-by": "timestamp",
-            "required": ["base_timestamp", "base_name"]
+            "required": ["base_timestamp", "base_name"],
         });
 
-        let entity: Result<JsonSchemaEntity, _> = serde_json::from_value(js);
+        let entity: Result<EntityJsonSchema, _> = serde_json::from_value(js);
 
         assert!(entity.is_ok());
         let entity = entity.unwrap();
@@ -255,7 +255,7 @@ pub mod test {
             },
         });
 
-        let entity: Result<JsonSchemaComponent, _> = serde_json::from_value(js);
+        let entity: Result<ComponentJsonSchema, _> = serde_json::from_value(js);
 
         assert!(entity.is_ok());
         let entity = entity.unwrap();

@@ -87,7 +87,7 @@ where
             return Err(StatusCode::UNAUTHORIZED);
         }
 
-        let mut check_token = "".to_string();
+        let mut check_token = String::new();
         if cookie_token.is_some() {
             check_token = cookie_token.unwrap().value().to_string();
             println!("Cook2 {:?}", check_token.clone());

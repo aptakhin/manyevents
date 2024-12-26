@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::schema::{
-    JsonSchemaProperty, JsonSchemaEntity,
+    JsonSchemaProperty, EntityJsonSchema,
     SerializationType,
 };
 
@@ -321,7 +321,7 @@ pub struct ChTableMigration {
     pub partition_by: ChColumnMigrationStatus<String>,
 }
 
-pub fn make_migration_plan(from: JsonSchemaEntity, to: JsonSchemaEntity) -> ChTableMigration {
+pub fn make_migration_plan(from: EntityJsonSchema, to: EntityJsonSchema) -> ChTableMigration {
     let mut columns: Vec<ChColumnMigration> = vec![];
 
     for (name, to_property) in &to.properties {
@@ -487,7 +487,7 @@ pub mod test {
 
     #[rstest]
     fn diff_entities_same_schema() {
-        let mut the_same = JsonSchemaEntity::new();
+        let mut the_same = EntityJsonSchema::new();
         the_same.properties = HashMap::from([(
             "name".to_string(),
             JsonSchemaProperty {
@@ -502,8 +502,8 @@ pub mod test {
 
     #[rstest]
     fn diff_entities_new_field() {
-        let empty = JsonSchemaEntity::new();
-        let mut new = JsonSchemaEntity::new();
+        let empty = EntityJsonSchema::new();
+        let mut new = EntityJsonSchema::new();
         new.properties = HashMap::from([(
             "name".to_string(),
             JsonSchemaProperty {
@@ -518,7 +518,7 @@ pub mod test {
 
     #[rstest]
     fn diff_entities_schema_changed_type() {
-        let mut old = JsonSchemaEntity::new();
+        let mut old = EntityJsonSchema::new();
         old.x_manyevents_ch_order_by = "name".to_string();
         old.properties = HashMap::from([(
             "name".to_string(),
@@ -527,7 +527,7 @@ pub mod test {
                 x_manyevents_ch_type: "String".to_string(),
             },
         )]);
-        let mut new = JsonSchemaEntity::new();
+        let mut new = EntityJsonSchema::new();
         new.x_manyevents_ch_order_by = "name".to_string();
         new.properties = HashMap::from([(
             "name".to_string(),
