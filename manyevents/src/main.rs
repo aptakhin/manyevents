@@ -590,6 +590,34 @@ pub mod test {
         account_inserted.expect("Should be inserted")
     }
 
+    struct TenantPushCreds {
+        push_token: String,
+    }
+
+    pub async fn add_tenant_and_push_creds(app: &Router<()>, pool: &DbPool) -> TenantPushCreds {
+        let scope_repository = ScopeRepository { pool: pool };
+        let api_auth_repository = ApiAuthRepository { pool: pool };
+        let push_api_auth_repository = PushApiAuthRepository { pool: pool };
+        let account_id = add_random_email_account(&pool).await;
+        let auth_token = ApiAuth::create_new(account_id, &api_auth_repository).await;
+        let tenant_id =
+            create_tenant("test-tenant".to_string(), auth_token.unwrap().token, &app).await;
+        let tenant_id = tenant_id.id.unwrap();
+        let storage_credential_id = scope_repository.create_storage_credential(tenant_id, "clickhouse".to_string(), "clickhouse://...".to_string(), account_id).await;
+        let storage_credential_id = storage_credential_id.unwrap();
+        let environment_id = scope_repository.create_environment(storage_credential_id, "testptile".to_string(), "testslug".to_string(), account_id).await;
+        let environment_id = environment_id.unwrap();
+        let auth = PushApiAuth::create_new(environment_id, &push_api_auth_repository, account_id).await;
+        TenantPushCreds {
+            push_token: auth.unwrap().token,
+        }
+    }
+
+    #[fixture]
+    pub async fn tenant_and_push_creds(#[future] app: Router<()>, #[future] pool: DbPool) -> TenantPushCreds {
+        add_tenant_and_push_creds(&app.await, &pool.await).await
+    }
+
     pub async fn create_tenant(
         title: String,
         bearer: String,
@@ -836,7 +864,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
-    async fn test_push_event(#[future] app: Router<()>, #[future] pool: DbPool) {
+    async fn test_push_event(#[future] app: Router<()>, #[future] pool: DbPool, #[future] tenant_and_push_creds: TenantPushCreds) {
         let push_request_str = r#"{
             "x-manyevents-name": "chrs_async_insert",
             "span_id": "xxxx",
@@ -847,29 +875,14 @@ pub mod test {
             "base_message": "test message"
         }
         "#;
-        let app = app.await;
-        let pool = pool.await;
-        let scope_repository = ScopeRepository { pool: &pool };
-        let api_auth_repository = ApiAuthRepository { pool: &pool };
-        let push_api_auth_repository = PushApiAuthRepository { pool: &pool };
-        let account_id = add_random_email_account(&pool).await;
-        let auth_token = ApiAuth::create_new(account_id, &api_auth_repository).await;
-        let tenant_id =
-            create_tenant("test-tenant".to_string(), auth_token.unwrap().token, &app).await;
-        let tenant_id = tenant_id.id.unwrap();
-        let storage_credential_id = scope_repository.create_storage_credential(tenant_id, "clickhouse".to_string(), "clickhouse://...".to_string(), account_id).await;
-        let storage_credential_id = storage_credential_id.unwrap();
-        let environment_id = scope_repository.create_environment(storage_credential_id, "testptile".to_string(), "testslug".to_string(), account_id).await;
-        let environment_id = environment_id.unwrap();
-        let auth = PushApiAuth::create_new(environment_id, &push_api_auth_repository, account_id).await;
-        let push_token = auth.unwrap().token;
 
         let response = app
+            .await
             .oneshot(
                 Request::builder()
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
-                    .header("Authorization", format!("Bearer {}", push_token))
+                    .header("Authorization", format!("Bearer {}", tenant_and_push_creds.await.push_token))
                     .uri("/push-api/v0-unstable/push-event")
                     .body(Body::from(push_request_str))
                     .unwrap(),
@@ -886,31 +899,16 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
-    async fn test_push_event_failed(#[future] app: Router<()>, #[future] pool: DbPool) {
-        let app = app.await;
-        let pool = pool.await;
+    async fn test_push_event_failed(#[future] app: Router<()>, #[future] pool: DbPool, #[future] tenant_and_push_creds: TenantPushCreds) {
         let push_request_str = r#"{ "event": {} }"#;
-        let scope_repository = ScopeRepository { pool: &pool };
-        let api_auth_repository = ApiAuthRepository { pool: &pool };
-        let push_api_auth_repository = PushApiAuthRepository { pool: &pool };
-        let account_id = add_random_email_account(&pool).await;
-        let auth_token = ApiAuth::create_new(account_id, &api_auth_repository).await;
-        let tenant_id =
-            create_tenant("test-tenant".to_string(), auth_token.unwrap().token, &app).await;
-        let tenant_id = tenant_id.id.unwrap();
-        let storage_credential_id = scope_repository.create_storage_credential(tenant_id, "clickhouse".to_string(), "clickhouse://...".to_string(), account_id).await;
-        let storage_credential_id = storage_credential_id.unwrap();
-        let environment_id = scope_repository.create_environment(storage_credential_id, "testptile".to_string(), "testslug".to_string(), account_id).await;
-        let environment_id = environment_id.unwrap();
-        let auth = PushApiAuth::create_new(environment_id, &push_api_auth_repository, account_id).await;
-        let push_token = auth.unwrap().token;
 
         let response = app
+            .await
             .oneshot(
                 Request::builder()
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
-                    .header("Authorization", format!("Bearer {}", push_token))
+                    .header("Authorization", format!("Bearer {}", tenant_and_push_creds.await.push_token))
                     .uri("/push-api/v0-unstable/push-event")
                     .body(Body::from(push_request_str))
                     .unwrap(),
