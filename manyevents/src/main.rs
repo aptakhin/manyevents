@@ -8,6 +8,7 @@ use axum::{
     routing::post,
     Json, Router,
 };
+use std::env;
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use axum_extra::{
     headers::authorization::{Authorization, Bearer},
@@ -615,6 +616,21 @@ async fn routes_app() -> Router<()> {
 
 #[tokio::main]
 async fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() == 2 {
+        if args[1] == "migrate" {
+            let pool = make_db().await;
+
+            let result = sqlx::migrate!("db/migrations")
+                .run(&pool)
+                .await
+                .expect("Migrations panic!");
+            println!("Migration result {:?}", result);
+            return
+        }
+    }
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
