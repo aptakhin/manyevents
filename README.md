@@ -1,5 +1,18 @@
 ## Run for the development
 
+```bash
+cp .env.example .env
+# edit secrets
+```
+
+Export all variables from `.env` to global environment. We could use `dotenv`, but we have errors variables weren't passing to children threads.
+
+```bash
+set -a # automatically export all variables
+source .env
+set +a
+```
+
 Setup infra:
 
 ```bash

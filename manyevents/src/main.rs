@@ -8,7 +8,6 @@ use axum::{
     routing::post,
     Json, Router,
 };
-
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use axum_extra::{
     headers::authorization::{Authorization, Bearer},
@@ -32,6 +31,7 @@ mod auth;
 mod ch;
 mod schema;
 mod scope;
+mod settings;
 mod tenant;
 
 use crate::auth::{
@@ -41,13 +41,14 @@ use crate::auth::{
 use crate::ch::{insert_smth, make_migration_plan, ChColumn, ClickHouseRepository};
 use crate::schema::{read_event_data, EventJsonSchema, JsonSchemaProperty, SerializationType};
 use crate::scope::ScopeRepository;
+use crate::settings::Settings;
 use crate::tenant::{Tenant, TenantRepository};
 
 type DbPool = PgPool;
 
 async fn make_db() -> DbPool {
-    let db_connection_str = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/manyevents".to_string());
+    let db_connection_str = Settings::read_settings().postgres_dsn;
+    println!("db_connection_str ={db_connection_str}");
 
     PgPoolOptions::new()
         .max_connections(5)
@@ -157,6 +158,8 @@ async fn post_signin(
         .signin(signin_form.email, signin_form.password)
         .await;
 
+    println!("Log1 {:?}", signin_response);
+
     if signin_response.is_err() {
         let mut env = Environment::new();
         env.set_loader(path_loader("static/templates"));
@@ -166,6 +169,8 @@ async fn post_signin(
 
     let api_auth_repository = ApiAuthRepository { pool: &pool };
     let auth_token = ApiAuth::create_new(signin_response.unwrap(), &api_auth_repository).await;
+
+    println!("Log2 {:?}", auth_token);
 
     if auth_token.is_err() {
         // Internal error

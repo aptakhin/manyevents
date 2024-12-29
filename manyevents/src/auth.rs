@@ -6,6 +6,7 @@ use uuid::Uuid;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use crate::settings::Settings;
 use axum::{
     async_trait,
     extract::{FromRef, FromRequest, Request},
@@ -126,7 +127,7 @@ pub enum AccountActionOnTenant {
 
 fn hash_password(password: String) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"unique_per_instance_hash_offset");
+    hasher.update(Settings::read_settings().get_binary_secret_key());
     hasher.update(password.as_bytes());
     let result = hasher.finalize();
     encode(result)
@@ -231,6 +232,7 @@ impl<'a> Account<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct ApiAuthRepository<'a> {
     pub pool: &'a DbPool,
 }
@@ -292,6 +294,7 @@ impl<'a> ApiAuthRepository<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct ApiAuth<'a> {
     pub account_id: Uuid,
     pub token: String,
