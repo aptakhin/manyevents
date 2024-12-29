@@ -2,9 +2,9 @@ name: Build and test
 
 on:
   push:
-    branches: [ "main", "workflows-clean" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "main", "workflows-clean" ]
+    branches: [ "main" ]
 
 jobs:
   build:
