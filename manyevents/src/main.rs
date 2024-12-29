@@ -87,12 +87,14 @@ struct CreateTenantResponse {
     is_success: bool,
     id: Option<Uuid>,
     clickhouse_read_dsn: String,
-    clickhouse_write_dsn: String,
+    clickhouse_admin_dsn: String,
+    push_token: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct ApplyEventSchemaRequest {
     tenant_id: Uuid,
+    name: String,
     schema: Value,
 }
 
@@ -321,7 +323,8 @@ async fn create_tenant(
         is_success: true,
         id: Some(created_tenant_resp.clone().unwrap()),
         clickhouse_read_dsn: cred.to_dsn(),
-        clickhouse_write_dsn: String::new(),
+        clickhouse_admin_dsn: String::new(),
+        push_token: String::new(),
     };
     Ok(Json(response))
 }
@@ -396,7 +399,7 @@ async fn apply_entity_schema_sync(
     }
     let new = new.unwrap();
 
-    let unique_table_name = "entity".to_string();
+    let unique_table_name = req.name;
 
     let migration_plan = make_migration_plan(empty, new);
     let migration = tenant_repo
@@ -513,7 +516,7 @@ async fn routes_app() -> Router<()> {
         .route("/docs", get(get_docs))
         .route("/dashboard", get(get_dashboard))
         .route("/push-api/v0-unstable/push-event", post(push_event))
-        .route("/manage-api/v0-unstable/create-account", post(create_account))
+        .route("/manage-api/v0-unstable/signin", post(create_account))
         .route("/manage-api/v0-unstable/create-tenant", post(create_tenant))
         .route(
             "/manage-api/v0-unstable/link-tenant-account",
@@ -679,7 +682,7 @@ pub mod test {
                 Request::builder()
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
-                    .uri("/manage-api/v0-unstable/create-account")
+                    .uri("/manage-api/v0-unstable/signin")
                     .body(Body::from(account_request_str))
                     .unwrap(),
             )
@@ -958,6 +961,7 @@ pub mod test {
 
         let req = ApplyEventSchemaRequest {
             tenant_id: tenant.id.unwrap(),
+            name: "main".to_string(),
             schema: json!({
                 "type": "object",
                 "properties": {

@@ -1,3 +1,6 @@
+initenv::
+	(set -a; source .env; set +a)
+
 run::
 	(cd manyevents && cargo run)
 
