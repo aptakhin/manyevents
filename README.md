@@ -110,7 +110,6 @@ $ cargo install cargo-watch --locked
 $ cargo install sqlx-cli
 ```
 
-
 ```bash
 $ sqlx migrate add --source manyevents/db/migrations create_tables
 ```
