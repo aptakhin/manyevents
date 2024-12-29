@@ -101,6 +101,37 @@ impl ClickHouseRepository {
         ClickHouseRepository { client }
     }
 
+    pub async fn insert(&self, table_name: String, rows: Vec<ChColumn>) -> Result<(), Error> {
+        let column_names_str = rows
+            .iter()
+            .map(|x| x.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let placeholders_str = rows.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+
+        let query = format!(
+            "INSERT INTO ? ({}) VALUES ({})",
+            column_names_str, placeholders_str
+        );
+        println!("sss: {}/{:?}", table_name, query);
+        let mut y = self.client.query(&query).bind(Identifier(&table_name));
+
+        for row in rows.iter() {
+            println!("pass: {}: {:?}", row.name.clone(), row.value.clone());
+
+            match &row.value {
+                SerializationType::Int(val) => y = y.bind(val),
+                SerializationType::Float(val) => y = y.bind(val),
+                SerializationType::Str(val) => y = y.bind(val),
+            }
+        }
+
+        let yy = y.execute().await;
+
+        println!("I: {:?}", yy);
+        yy
+    }
+
     pub async fn create_credential(
         &self,
         unique_suffix: String,

@@ -37,8 +37,8 @@ impl<'a> ScopeRepository<'a> {
         })
     }
 
-    pub async fn has_tenant_storage_credential(&self, tenant_id: Uuid) -> bool {
-        sqlx::query_as(
+    pub async fn get_tenant_storage_credential(&self, tenant_id: Uuid) -> Result<Uuid, ()> {
+        let res: Result<Option<(Uuid,)>, _> = sqlx::query_as(
             "
             SELECT id FROM storage_credential
             WHERE
@@ -48,9 +48,15 @@ impl<'a> ScopeRepository<'a> {
         )
         .bind(tenant_id)
         .fetch_optional(self.pool)
-        .await
-        .and_then(|r: Option<(Uuid,)>| Ok(r.is_some()))
-        .expect("SQL error in has_tenant_storage_credential")
+        .await;
+        match res {
+            Ok(Some((id,))) => Ok(id),
+            Ok(None) => Err(()),
+            Err(e) => {
+                println!("SQL error in get_tenant_storage_credential: {}", e);
+                Err(())
+            }
+        }
     }
 
     pub async fn create_environment(
@@ -78,5 +84,30 @@ impl<'a> ScopeRepository<'a> {
             println!("Database query error: {}", e);
             Err(())
         })
+    }
+
+    pub async fn get_tenant_and_storage_credential_by_environment(&self, environment_id: Uuid) -> Result<(Uuid, String), String> {
+        let res: Result<Option<(Uuid, String)>, _> = sqlx::query_as(
+            "
+            SELECT
+                sc.tenant_id as tenant_id,
+                sc.dsn as dsn
+            FROM environment e
+            LEFT JOIN storage_credential sc ON (sc.id = e.storage_credential_id)
+            WHERE
+                e.id = $1
+            LIMIT 1
+            ",
+        )
+        .bind(environment_id)
+        .fetch_optional(self.pool)
+        .await;
+        match res {
+            Ok(Some((tenant_id, dsn))) => Ok((tenant_id, dsn)),
+            Ok(None) => Err("No entry".to_string()),
+            Err(e) => {
+                Err(format!("SQL error in get_tenant_and_storage_credential_by_environment: {}", e))
+            }
+        }
     }
 }

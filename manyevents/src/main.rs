@@ -305,8 +305,11 @@ async fn create_tenant(
     let cred = cred.unwrap();
 
     let scope = ScopeRepository::new(&pool);
-    if !scope.has_tenant_storage_credential(tenant_id.clone()).await {
-        let storage_credential_resp = scope
+
+    let mut storage_credential_resp = scope.get_tenant_storage_credential(tenant_id.clone()).await;
+
+    if !storage_credential_resp.is_ok() {
+        storage_credential_resp = scope
             .create_storage_credential(
                 tenant_id.clone(),
                 "clickhouse".to_string(),
@@ -320,12 +323,30 @@ async fn create_tenant(
         }
     }
 
+    let scope_repository = ScopeRepository { pool: &pool };
+    let api_auth_repository = ApiAuthRepository { pool: &pool };
+    let push_api_auth_repository = PushApiAuthRepository { pool: &pool };
+
+    let storage_credential_id = storage_credential_resp.unwrap();
+    let environment_id = scope_repository
+        .create_environment(
+            storage_credential_id,
+            "testptile".to_string(),
+            "testslug".to_string(),
+            by_account_id.clone(),
+        )
+        .await;
+    let environment_id = environment_id.unwrap();
+    let auth =
+        PushApiAuth::create_new(environment_id, &push_api_auth_repository, by_account_id).await;
+    let push_token = auth.unwrap().token;
+
     let response = CreateTenantResponse {
         is_success: true,
         id: Some(created_tenant_resp.clone().unwrap()),
         clickhouse_read_dsn: cred.to_dsn(),
         clickhouse_admin_dsn: String::new(),
-        push_token: String::new(),
+        push_token: push_token,
     };
     Ok(Json(response))
 }
@@ -424,7 +445,8 @@ async fn push_event(
     if auth_response.is_err() {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    // let by_account_id = auth_response.clone().unwrap().0;
+    println!("Push-event auth {:?}", auth_response);
+    let auth_response = auth_response.unwrap();
 
     let body_str = std::str::from_utf8(&body).unwrap();
     let data: Result<Value, _> = serde_json::from_str(&body_str);
@@ -444,6 +466,24 @@ async fn push_event(
         }));
     }
 
+    let scope_repository = ScopeRepository { pool: &pool };
+
+    let res = scope_repository.get_tenant_and_storage_credential_by_environment(auth_response.environment_id.clone()).await;
+
+    if res.is_err() {
+        return Ok(Json(PushEventResponse {
+            is_success: false,
+            message_code: Some(res.unwrap_err()),
+        }));
+    }
+
+    let res = res.unwrap();
+    let tenant_id = res.0;
+
+    let unique_suffix = format!("{}", tenant_id.clone().as_simple());
+    println!("Use tenantdb {unique_suffix} for tenant_id={tenant_id}");
+    let tenant_repo = ClickHouseRepository::choose_tenant(unique_suffix.clone());
+
     let event = result.unwrap();
 
     // todo check schema
@@ -451,6 +491,7 @@ async fn push_event(
     let mut columns: Vec<ChColumn> = vec![];
 
     let mut table_name = None;
+
 
     for unit in event.units.iter() {
         for value in unit.value.iter() {
@@ -479,7 +520,8 @@ async fn push_event(
             message_code: Some("event_name_is_not_given".to_string()),
         }));
     }
-    let res = insert_smth(table_name.unwrap().to_string(), columns).await;
+
+    let res = tenant_repo.insert(table_name.unwrap().to_string(), columns).await;
 
     if res.is_err() {
         return Ok(Json(PushEventResponse {
@@ -593,6 +635,8 @@ pub mod test {
 
     struct TenantPushCreds {
         push_token: String,
+        api_token: String,
+        tenant_id: Uuid,
     }
 
     pub async fn add_tenant_and_push_creds(app: &Router<()>, pool: &DbPool) -> TenantPushCreds {
@@ -601,8 +645,9 @@ pub mod test {
         let push_api_auth_repository = PushApiAuthRepository { pool: pool };
         let account_id = add_random_email_account(&pool).await;
         let auth_token = ApiAuth::create_new(account_id, &api_auth_repository).await;
+        let auth_token = auth_token.unwrap().token;
         let tenant_id =
-            create_tenant("test-tenant".to_string(), auth_token.unwrap().token, &app).await;
+            create_tenant("test-tenant".to_string(), auth_token.clone(), &app).await;
         let tenant_id = tenant_id.id.unwrap();
         let storage_credential_id = scope_repository
             .create_storage_credential(
@@ -626,6 +671,8 @@ pub mod test {
             PushApiAuth::create_new(environment_id, &push_api_auth_repository, account_id).await;
         TenantPushCreds {
             push_token: auth.unwrap().token,
+            api_token: auth_token,
+            tenant_id,
         }
     }
 
@@ -888,8 +935,44 @@ pub mod test {
         #[future] pool: DbPool,
         #[future] tenant_and_push_creds: TenantPushCreds,
     ) {
+        let app = app.await;
+        let tenant_and_push_creds = tenant_and_push_creds.await;
+        let req = ApplyEventSchemaRequest {
+            tenant_id: tenant_and_push_creds.tenant_id,
+            name: "main".to_string(),
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
+                    "base_parent_span_id": { "type": "string", "x-manyevents-ch-type": "String" },
+                    "base_message": { "type": "string", "x-manyevents-ch-type": "String" },
+                    "span_start_time": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
+                    "span_end_time": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
+                    "span_id": { "type": "string", "x-manyevents-ch-type": "String" },
+                },
+                "x-manyevents-ch-order-by": "base_timestamp",
+                "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
+                "x-manyevents-ch-partition-by": "base_timestamp",
+            }),
+        };
+        let request_str = serde_json::to_string(&req).unwrap();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", tenant_and_push_creds.api_token))
+                    .uri("/manage-api/v0-unstable/apply-entity-schema-sync")
+                    .body(Body::from(request_str.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
         let push_request_str = r#"{
-            "x-manyevents-name": "chrs_async_insert",
+            "x-manyevents-name": "main",
             "span_id": "xxxx",
             "span_start_time": 1234567890,
             "span_end_time": 1234567892,
@@ -900,14 +983,13 @@ pub mod test {
         "#;
 
         let response = app
-            .await
             .oneshot(
                 Request::builder()
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
                     .header(
                         "Authorization",
-                        format!("Bearer {}", tenant_and_push_creds.await.push_token),
+                        format!("Bearer {}", tenant_and_push_creds.push_token),
                     )
                     .uri("/push-api/v0-unstable/push-event")
                     .body(Body::from(push_request_str))
@@ -961,7 +1043,6 @@ pub mod test {
     #[tokio::test]
     async fn test_push_event_401(#[future] app: Router<()>) {
         let push_request_str = r#"{
-            "x-manyevents-tenant-id": "main",
             "x-manyevents-name": "main",
             "span_id": "xxxx"
         }
