@@ -1,7 +1,7 @@
 use crate::DbPool;
 use crate::Value;
-use uuid::Uuid;
 use sqlx::Error;
+use uuid::Uuid;
 
 pub struct ScopeRepository<'a> {
     pub pool: &'a DbPool,
@@ -88,7 +88,10 @@ impl<'a> ScopeRepository<'a> {
         })
     }
 
-    pub async fn get_tenant_and_storage_credential_by_environment(&self, environment_id: Uuid) -> Result<(Uuid, String), String> {
+    pub async fn get_tenant_and_storage_credential_by_environment(
+        &self,
+        environment_id: Uuid,
+    ) -> Result<(Uuid, String), String> {
         let res: Result<Option<(Uuid, String)>, _> = sqlx::query_as(
             "
             SELECT
@@ -107,9 +110,10 @@ impl<'a> ScopeRepository<'a> {
         match res {
             Ok(Some((tenant_id, dsn))) => Ok((tenant_id, dsn)),
             Ok(None) => Err("No entry".to_string()),
-            Err(e) => {
-                Err(format!("SQL error in get_tenant_and_storage_credential_by_environment: {}", e))
-            }
+            Err(e) => Err(format!(
+                "SQL error in get_tenant_and_storage_credential_by_environment: {}",
+                e
+            )),
         }
     }
 
@@ -131,13 +135,17 @@ impl<'a> ScopeRepository<'a> {
         match res {
             Ok(Some((value,))) => Ok(value),
             Ok(None) => Err("No entry".to_string()),
-            Err(e) => {
-                Err(format!("SQL error in get_event_schema: {}", e))
-            }
+            Err(e) => Err(format!("SQL error in get_event_schema: {}", e)),
         }
     }
 
-    pub async fn save_event_schema(&self, tenant_id: Uuid, name: String, set: Value, by_account_id: Uuid) -> Result<(), String> {
+    pub async fn save_event_schema(
+        &self,
+        tenant_id: Uuid,
+        name: String,
+        set: Value,
+        by_account_id: Uuid,
+    ) -> Result<(), String> {
         let res: Result<Option<(_)>, Error> = sqlx::query(
             "
             INSERT INTO event
@@ -155,9 +163,7 @@ impl<'a> ScopeRepository<'a> {
         match res {
             Ok(None) => Ok(()),
             Ok(Some(_)) => Ok(()),
-            Err(e) => {
-                Err(format!("SQL error in get_event_schema: {}", e))
-            }
+            Err(e) => Err(format!("SQL error in get_event_schema: {}", e)),
         }
     }
 }

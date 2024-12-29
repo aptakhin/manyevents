@@ -8,12 +8,12 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use std::env;
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use axum_extra::{
     headers::authorization::{Authorization, Bearer},
     TypedHeader,
 };
+use std::env;
 
 use http_body_util::BodyExt;
 use minijinja::{context, path_loader, Environment};
@@ -50,8 +50,6 @@ type DbPool = PgPool;
 
 async fn make_db() -> DbPool {
     let db_connection_str = Settings::read_settings().postgres_dsn;
-    println!("db_connection_str ={db_connection_str}");
-
     PgPoolOptions::new()
         .max_connections(5)
         .acquire_timeout(Duration::from_secs(3))
@@ -399,19 +397,23 @@ async fn apply_event_schema_sync(
 
     let tenant_repo = ClickHouseRepository::choose_tenant(unique_suffix.clone());
 
-
     let new: Result<EventJsonSchema, _> = serde_json::from_value(req.schema);
     if new.is_err() {
         println!("EventJsonSchema parser failed {:?}", new);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-
     let unique_table_name = req.name;
 
     let scope_repository = ScopeRepository { pool: &pool };
-    println!("Getting schema {}/{}", req.tenant_id.clone(), unique_table_name.clone());
-    let event_schema_res = scope_repository.get_event_schema(req.tenant_id.clone(), unique_table_name.clone()).await;
+    println!(
+        "Getting schema {}/{}",
+        req.tenant_id.clone(),
+        unique_table_name.clone()
+    );
+    let event_schema_res = scope_repository
+        .get_event_schema(req.tenant_id.clone(), unique_table_name.clone())
+        .await;
     println!("XX: {:?}", event_schema_res.clone());
 
     let new = new.unwrap();
@@ -446,8 +448,19 @@ async fn apply_event_schema_sync(
     }
 
     let new_schema_value: Value = serde_json::to_value(new).unwrap();
-    let save_res = scope_repository.save_event_schema(req.tenant_id.clone(), unique_table_name.clone(), new_schema_value, by_account_id.clone()).await;
-    println!("Saving schema {}/{}", req.tenant_id.clone(), unique_table_name.clone());
+    let save_res = scope_repository
+        .save_event_schema(
+            req.tenant_id.clone(),
+            unique_table_name.clone(),
+            new_schema_value,
+            by_account_id.clone(),
+        )
+        .await;
+    println!(
+        "Saving schema {}/{}",
+        req.tenant_id.clone(),
+        unique_table_name.clone()
+    );
     if save_res.is_err() {
         println!("Saving schema failed {:?}", save_res);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -498,7 +511,9 @@ async fn push_event(
 
     let scope_repository = ScopeRepository { pool: &pool };
 
-    let res = scope_repository.get_tenant_and_storage_credential_by_environment(auth_response.environment_id.clone()).await;
+    let res = scope_repository
+        .get_tenant_and_storage_credential_by_environment(auth_response.environment_id.clone())
+        .await;
 
     if res.is_err() {
         return Ok(Json(PushEventResponse {
@@ -521,7 +536,6 @@ async fn push_event(
     let mut columns: Vec<ChColumn> = vec![];
 
     let mut table_name = None;
-
 
     for unit in event.units.iter() {
         for value in unit.value.iter() {
@@ -551,7 +565,9 @@ async fn push_event(
         }));
     }
 
-    let res = tenant_repo.insert(table_name.unwrap().to_string(), columns).await;
+    let res = tenant_repo
+        .insert(table_name.unwrap().to_string(), columns)
+        .await;
 
     if res.is_err() {
         return Ok(Json(PushEventResponse {
@@ -587,12 +603,6 @@ where
 async fn routes_app() -> Router<()> {
     let pool = make_db().await;
 
-    let result = sqlx::migrate!("db/migrations")
-        .run(&pool)
-        .await
-        .expect("Migrations panic!");
-    println!("Migration result {:?}", result);
-
     let router: Router<()> = Router::new()
         .route("/", get(get_root))
         .route("/signin", get(get_signin).post(post_signin))
@@ -627,7 +637,7 @@ async fn main() {
                 .await
                 .expect("Migrations panic!");
             println!("Migration result {:?}", result);
-            return
+            return;
         }
     }
 
@@ -691,8 +701,7 @@ pub mod test {
         let account_id = add_random_email_account(&pool).await;
         let auth_token = ApiAuth::create_new(account_id, &api_auth_repository).await;
         let auth_token = auth_token.unwrap().token;
-        let tenant_id =
-            create_tenant("test-tenant".to_string(), auth_token.clone(), &app).await;
+        let tenant_id = create_tenant("test-tenant".to_string(), auth_token.clone(), &app).await;
         let tenant_id = tenant_id.id.unwrap();
         let storage_credential_id = scope_repository
             .create_storage_credential(
@@ -1007,7 +1016,10 @@ pub mod test {
                 Request::builder()
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
-                    .header("Authorization", format!("Bearer {}", tenant_and_push_creds.api_token))
+                    .header(
+                        "Authorization",
+                        format!("Bearer {}", tenant_and_push_creds.api_token),
+                    )
                     .uri("/manage-api/v0-unstable/apply-event-schema-sync")
                     .body(Body::from(request_str.clone()))
                     .unwrap(),
@@ -1081,7 +1093,10 @@ pub mod test {
         let response_str = std::str::from_utf8(&body).unwrap();
         let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
         assert_eq!(push_event_response.is_success, false);
-        assert_eq!(push_event_response.message_code.unwrap(), "event_name_is_not_given");
+        assert_eq!(
+            push_event_response.message_code.unwrap(),
+            "event_name_is_not_given"
+        );
     }
 
     #[rstest]
@@ -1177,7 +1192,10 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
-    async fn test_apply_event_double_schema_change(#[future] app: Router<()>, #[future] pool: DbPool) {
+    async fn test_apply_event_double_schema_change(
+        #[future] app: Router<()>,
+        #[future] pool: DbPool,
+    ) {
         let app = app.await;
         let pool = pool.await;
         let api_auth_repository = ApiAuthRepository { pool: &pool };

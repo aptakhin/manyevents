@@ -1,5 +1,7 @@
 Business and tech observability in the one product. Because this separation hurts us.
 
+[![Build and test](https://github.com/aptakhin/manyevents/actions/workflows/build-and-test.yml/badge.svg?branch=main)](https://github.com/aptakhin/manyevents/actions/workflows/build-and-test.yml)
+
 # The shortest guide to run queries
 
 ```bash
@@ -40,7 +42,8 @@ Got response:
 Let's declare a schema for wide-event named `main`.
 
 ```bash
-curl "http://localhost:8000/manage-api/v0-unstable/apply-event-schema-sync" -d '{"tenant_id": "2b0d6db7-ff34-4f65-9385-3d2d463d3013", "name": "main", "schema": {"type": "object",
+curl "http://localhost:8000/manage-api/v0-unstable/apply-event-schema-sync" \
+-d '{"tenant_id": "2b0d6db7-ff34-4f65-9385-3d2d463d3013", "name": "main", "schema": {"type": "object",
     "properties": {
         "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
         "base_parent_span_id": { "type": "string", "x-manyevents-ch-type": "String" },
@@ -74,6 +77,12 @@ curl "http://localhost:8000/push-api/v0-unstable/push-event" -d '{"x-manyevents-
     -H "Content-Type: application/json" -H "Authorization: Bearer c1f7c0f9e7ca95daf5979576a5dc3b757428a3395548bcd39f0148593907dadd"
 ```
 
+Response:
+
+```json
+{"is_success":true,"message_code":null}
+```
+
 The data is in Clickhouse now.
 
 # Run for the development
@@ -95,15 +104,29 @@ Setup infra:
 docker compose up -d --build
 ```
 
+Then run data migrations in PostgreSQL:
+
+```bash
+make migrate
+```
+
 Then:
 
 ```bash
+# Just run it
 make run
-# run tests once
+
+# Run tests once
 make test
-# run tests permanently watching for the source changes
+
+# Run tests permanently watching for the source changes
 make testw
+
+# Run building binary rerunning on code changes
+make runw
 ```
+
+I use [Miro board](https://miro.com/app/board/uXjVL9mlc6Y=/?share_link_id=101307934260) for brainstorming. There various things could be found for the product development.
 
 ## Install tools
 
