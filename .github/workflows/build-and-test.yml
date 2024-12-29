@@ -1,0 +1,24 @@
+name: Build and test
+
+on:
+  push:
+    branches: [ "main", "workflows-clean" ]
+  pull_request:
+    branches: [ "main", "workflows-clean" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup environment
+      run: |
+        cp .env.example .env
+        while read line; do
+          echo "$line" >> $GITHUB_ENV
+        done < .env
+
+    - name: Build and run acceptance tests
+      run: bash scripts/build-and-test.sh
