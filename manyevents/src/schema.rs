@@ -174,7 +174,7 @@ pub mod test {
     }
 
     #[rstest]
-    fn parse_entity_json_schema_successfully() {
+    fn parse_event_json_schema_successfully() {
         let js = json!({
             "type": "object",
             "properties": {
@@ -187,27 +187,27 @@ pub mod test {
             "required": ["base_timestamp", "base_name"],
         });
 
-        let entity: Result<EventJsonSchema, _> = serde_json::from_value(js);
+        let event: Result<EventJsonSchema, _> = serde_json::from_value(js);
 
-        assert!(entity.is_ok());
-        let entity = entity.unwrap();
+        assert!(event.is_ok());
+        let event = event.unwrap();
         assert_eq!(
-            entity.properties["base_timestamp"].type_,
+            event.properties["base_timestamp"].type_,
             "integer".to_string()
         );
         assert_eq!(
-            entity.properties["base_timestamp"].x_manyevents_ch_type,
+            event.properties["base_timestamp"].x_manyevents_ch_type,
             "DateTime64(3)".to_string()
         );
-        assert_eq!(entity.properties["base_name"].type_, "string".to_string());
+        assert_eq!(event.properties["base_name"].type_, "string".to_string());
         assert_eq!(
-            entity.properties["base_name"].x_manyevents_ch_type,
+            event.properties["base_name"].x_manyevents_ch_type,
             "String".to_string()
         );
-        assert_eq!(entity.x_manyevents_ch_order_by, "timestamp".to_string());
-        assert_eq!(entity.x_manyevents_ch_partition_by, "timestamp".to_string());
+        assert_eq!(event.x_manyevents_ch_order_by, "timestamp".to_string());
+        assert_eq!(event.x_manyevents_ch_partition_by, "timestamp".to_string());
         assert_eq!(
-            entity.x_manyevents_ch_partition_by_func,
+            event.x_manyevents_ch_partition_by_func,
             Some("toYYYYMMDD".to_string())
         );
     }
@@ -221,13 +221,13 @@ pub mod test {
             },
         });
 
-        let entity: Result<ComponentJsonSchema, _> = serde_json::from_value(js);
+        let event: Result<ComponentJsonSchema, _> = serde_json::from_value(js);
 
-        assert!(entity.is_ok());
-        let entity = entity.unwrap();
-        assert_eq!(entity.properties["name"].type_, "string".to_string());
+        assert!(event.is_ok());
+        let event = event.unwrap();
+        assert_eq!(event.properties["name"].type_, "string".to_string());
         assert_eq!(
-            entity.properties["name"].x_manyevents_ch_type,
+            event.properties["name"].x_manyevents_ch_type,
             "String".to_string(),
         );
     }

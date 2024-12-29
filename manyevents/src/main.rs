@@ -374,7 +374,7 @@ async fn link_tenant_account(
     Ok(Json(response))
 }
 
-async fn apply_entity_schema_sync(
+async fn apply_event_schema_sync(
     auth: TypedHeader<Authorization<Bearer>>,
     State(pool): State<DbPool>,
     Json(req): Json<ApplyEventSchemaRequest>,
@@ -605,8 +605,8 @@ async fn routes_app() -> Router<()> {
             post(link_tenant_account),
         )
         .route(
-            "/manage-api/v0-unstable/apply-entity-schema-sync",
-            post(apply_entity_schema_sync),
+            "/manage-api/v0-unstable/apply-event-schema-sync",
+            post(apply_event_schema_sync),
         )
         .with_state(pool);
 
@@ -992,7 +992,7 @@ pub mod test {
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", tenant_and_push_creds.api_token))
-                    .uri("/manage-api/v0-unstable/apply-entity-schema-sync")
+                    .uri("/manage-api/v0-unstable/apply-event-schema-sync")
                     .body(Body::from(request_str.clone()))
                     .unwrap(),
             )
@@ -1161,7 +1161,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
-    async fn test_make_magic(#[future] app: Router<()>, #[future] pool: DbPool) {
+    async fn test_apply_event_double_schema_change(#[future] app: Router<()>, #[future] pool: DbPool) {
         let app = app.await;
         let pool = pool.await;
         let api_auth_repository = ApiAuthRepository { pool: &pool };
@@ -1170,6 +1170,37 @@ pub mod test {
         let bearer = auth_token.unwrap().token;
         let tenant = create_tenant("test-tenant".to_string(), bearer.clone(), &app).await;
 
+        let req = ApplyEventSchemaRequest {
+            tenant_id: tenant.id.unwrap(),
+            name: "main".to_string(),
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
+                    "base_name": { "type": "string", "x-manyevents-ch-type": "String" },
+                    "base_big_age": { "type": "integer", "x-manyevents-ch-type": "Int64" },
+                },
+                "x-manyevents-ch-order-by": "base_timestamp",
+                "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
+                "x-manyevents-ch-partition-by": "base_timestamp",
+            }),
+        };
+        let request_str = serde_json::to_string(&req).unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", bearer))
+                    .uri("/manage-api/v0-unstable/apply-event-schema-sync")
+                    .body(Body::from(request_str.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
         let req = ApplyEventSchemaRequest {
             tenant_id: tenant.id.unwrap(),
             name: "main".to_string(),
@@ -1195,23 +1226,7 @@ pub mod test {
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", bearer))
-                    .uri("/manage-api/v0-unstable/apply-entity-schema-sync")
-                    .body(Body::from(request_str.clone()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(http::Method::POST)
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", format!("Bearer {}", bearer))
-                    .uri("/manage-api/v0-unstable/apply-entity-schema-sync")
+                    .uri("/manage-api/v0-unstable/apply-event-schema-sync")
                     .body(Body::from(request_str.clone()))
                     .unwrap(),
             )

@@ -40,7 +40,7 @@ Got response:
 Let's declare a schema for wide-event named `main`.
 
 ```bash
-curl "http://localhost:8000/manage-api/v0-unstable/apply-entity-schema-sync" -d '{"tenant_id": "2b0d6db7-ff34-4f65-9385-3d2d463d3013", "name": "main", "schema": {"type": "object",
+curl "http://localhost:8000/manage-api/v0-unstable/apply-event-schema-sync" -d '{"tenant_id": "2b0d6db7-ff34-4f65-9385-3d2d463d3013", "name": "main", "schema": {"type": "object",
     "properties": {
         "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
         "base_parent_span_id": { "type": "string", "x-manyevents-ch-type": "String" },
