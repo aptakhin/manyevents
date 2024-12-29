@@ -35,8 +35,9 @@ mod settings;
 mod tenant;
 
 use crate::auth::{
-    ensure_header_authentification, Account, AccountActionOnTenant, AccountRepository, ApiAuth,
-    ApiAuthRepository, Authentificated, ensure_push_header_authentification, PushApiAuthRepository, PushApiAuth,
+    ensure_header_authentification, ensure_push_header_authentification, Account,
+    AccountActionOnTenant, AccountRepository, ApiAuth, ApiAuthRepository, Authentificated,
+    PushApiAuth, PushApiAuthRepository,
 };
 use crate::ch::{insert_smth, make_migration_plan, ChColumn, ClickHouseRepository};
 use crate::schema::{read_event_data, EventJsonSchema, JsonSchemaProperty, SerializationType};
@@ -227,7 +228,7 @@ async fn create_account(
     State(pool): State<DbPool>,
     Json(account_request): Json<CreateAccountRequest>,
 ) -> Result<Json<CreateAccountResponse>, StatusCode> {
-    let account_repository = AccountRepository { pool: &pool  };
+    let account_repository = AccountRepository { pool: &pool };
     let api_auth_repository = ApiAuthRepository { pool: &pool };
     let account = Account::new(&account_repository);
 
@@ -603,18 +604,36 @@ pub mod test {
         let tenant_id =
             create_tenant("test-tenant".to_string(), auth_token.unwrap().token, &app).await;
         let tenant_id = tenant_id.id.unwrap();
-        let storage_credential_id = scope_repository.create_storage_credential(tenant_id, "clickhouse".to_string(), "clickhouse://...".to_string(), account_id).await;
+        let storage_credential_id = scope_repository
+            .create_storage_credential(
+                tenant_id,
+                "clickhouse".to_string(),
+                "clickhouse://...".to_string(),
+                account_id,
+            )
+            .await;
         let storage_credential_id = storage_credential_id.unwrap();
-        let environment_id = scope_repository.create_environment(storage_credential_id, "testptile".to_string(), "testslug".to_string(), account_id).await;
+        let environment_id = scope_repository
+            .create_environment(
+                storage_credential_id,
+                "testptile".to_string(),
+                "testslug".to_string(),
+                account_id,
+            )
+            .await;
         let environment_id = environment_id.unwrap();
-        let auth = PushApiAuth::create_new(environment_id, &push_api_auth_repository, account_id).await;
+        let auth =
+            PushApiAuth::create_new(environment_id, &push_api_auth_repository, account_id).await;
         TenantPushCreds {
             push_token: auth.unwrap().token,
         }
     }
 
     #[fixture]
-    pub async fn tenant_and_push_creds(#[future] app: Router<()>, #[future] pool: DbPool) -> TenantPushCreds {
+    pub async fn tenant_and_push_creds(
+        #[future] app: Router<()>,
+        #[future] pool: DbPool,
+    ) -> TenantPushCreds {
         add_tenant_and_push_creds(&app.await, &pool.await).await
     }
 
@@ -864,7 +883,11 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
-    async fn test_push_event(#[future] app: Router<()>, #[future] pool: DbPool, #[future] tenant_and_push_creds: TenantPushCreds) {
+    async fn test_push_event(
+        #[future] app: Router<()>,
+        #[future] pool: DbPool,
+        #[future] tenant_and_push_creds: TenantPushCreds,
+    ) {
         let push_request_str = r#"{
             "x-manyevents-name": "chrs_async_insert",
             "span_id": "xxxx",
@@ -882,7 +905,10 @@ pub mod test {
                 Request::builder()
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
-                    .header("Authorization", format!("Bearer {}", tenant_and_push_creds.await.push_token))
+                    .header(
+                        "Authorization",
+                        format!("Bearer {}", tenant_and_push_creds.await.push_token),
+                    )
                     .uri("/push-api/v0-unstable/push-event")
                     .body(Body::from(push_request_str))
                     .unwrap(),
@@ -899,7 +925,11 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
-    async fn test_push_event_failed(#[future] app: Router<()>, #[future] pool: DbPool, #[future] tenant_and_push_creds: TenantPushCreds) {
+    async fn test_push_event_failed(
+        #[future] app: Router<()>,
+        #[future] pool: DbPool,
+        #[future] tenant_and_push_creds: TenantPushCreds,
+    ) {
         let push_request_str = r#"{ "event": {} }"#;
 
         let response = app
@@ -908,7 +938,10 @@ pub mod test {
                 Request::builder()
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
-                    .header("Authorization", format!("Bearer {}", tenant_and_push_creds.await.push_token))
+                    .header(
+                        "Authorization",
+                        format!("Bearer {}", tenant_and_push_creds.await.push_token),
+                    )
                     .uri("/push-api/v0-unstable/push-event")
                     .body(Body::from(push_request_str))
                     .unwrap(),

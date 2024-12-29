@@ -6,8 +6,8 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::settings::Settings;
 use crate::schema::{EventJsonSchema, JsonSchemaProperty, SerializationType};
+use crate::settings::Settings;
 
 #[derive(Row, Deserialize, Debug)]
 pub struct ChColumn {

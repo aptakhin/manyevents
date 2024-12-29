@@ -6,8 +6,8 @@ use uuid::Uuid;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use crate::scope::ScopeRepository;
 use crate::settings::Settings;
-use crate::scope::{ScopeRepository};
 use axum::{
     async_trait,
     extract::{FromRef, FromRequest, Request},
@@ -136,7 +136,9 @@ pub async fn ensure_push_header_authentification(
     let push_api_repository = PushApiAuthRepository { pool: pool };
     let resp = PushApiAuth::from(header_token, &push_api_repository).await;
     match resp {
-        Ok(auth) => Ok(PushApiInfo { environment_id: auth.environment_id }),
+        Ok(auth) => Ok(PushApiInfo {
+            environment_id: auth.environment_id,
+        }),
         Err(_) => Err(AuthError::InvalidToken),
     }
 }
@@ -367,7 +369,12 @@ pub struct PushApiAuthRepository<'a> {
 }
 
 impl<'a> PushApiAuthRepository<'a> {
-    pub async fn add_token(&self, token: String, environment_id: Uuid, by_account_id: Uuid) -> Result<Uuid, String> {
+    pub async fn add_token(
+        &self,
+        token: String,
+        environment_id: Uuid,
+        by_account_id: Uuid,
+    ) -> Result<Uuid, String> {
         let result: Result<(bool, Uuid), String> = sqlx::query_as(
             "
             INSERT INTO push_token
@@ -423,7 +430,7 @@ impl<'a> PushApiAuthRepository<'a> {
         let secret_key = rand::thread_rng().gen::<[u8; 32]>();
         let secure_token =
             Token::new(encode(tenant_id).clone(), &secret_key).expect("No token error");
-       format!("pt-{}", secure_token.token)
+        format!("pt-{}", secure_token.token)
     }
 }
 
@@ -457,7 +464,9 @@ impl<'a> PushApiAuth<'a> {
         by_account_id: Uuid,
     ) -> Result<PushApiAuth, String> {
         let token = ApiAuth::generate_token(environment_id);
-        let auth_result = api_auth_repo.add_token(token.clone(), environment_id, by_account_id).await;
+        let auth_result = api_auth_repo
+            .add_token(token.clone(), environment_id, by_account_id)
+            .await;
         if auth_result.is_err() {
             return Err("invalid_token".to_string());
         }
@@ -472,9 +481,9 @@ impl<'a> PushApiAuth<'a> {
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use crate::test::{add_random_email_account, pool, create_tenant, app};
-    use rstest::rstest;
+    use crate::test::{add_random_email_account, app, create_tenant, pool};
     use axum::Router;
+    use rstest::rstest;
 
     #[rstest]
     #[tokio::test]
@@ -528,11 +537,26 @@ pub mod test {
         let tenant_id =
             create_tenant("test-tenant".to_string(), auth_token.unwrap().token, &app).await;
         let tenant_id = tenant_id.id.unwrap();
-        let storage_credential_id = scope_repository.create_storage_credential(tenant_id, "clickhouse".to_string(), "clickhouse://...".to_string(), account_id).await;
+        let storage_credential_id = scope_repository
+            .create_storage_credential(
+                tenant_id,
+                "clickhouse".to_string(),
+                "clickhouse://...".to_string(),
+                account_id,
+            )
+            .await;
         let storage_credential_id = storage_credential_id.unwrap();
-        let environment_id = scope_repository.create_environment(storage_credential_id, "testptile".to_string(), "testslug".to_string(), account_id).await;
+        let environment_id = scope_repository
+            .create_environment(
+                storage_credential_id,
+                "testptile".to_string(),
+                "testslug".to_string(),
+                account_id,
+            )
+            .await;
         let environment_id = environment_id.unwrap();
-        let auth = PushApiAuth::create_new(environment_id, &push_api_auth_repository, account_id).await;
+        let auth =
+            PushApiAuth::create_new(environment_id, &push_api_auth_repository, account_id).await;
         let token = auth.unwrap().token;
         assert!(!token.is_empty());
 
