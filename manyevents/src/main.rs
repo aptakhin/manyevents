@@ -117,19 +117,6 @@ struct PushEventResponse {
     message_code: Option<String>,
 }
 
-// #[derive(Debug, Serialize, Deserialize)]
-// enum SerializationType {
-//     Int(i64),
-//     Float(f64),
-//     Str(String),
-// }
-
-// #[derive(Debug, Serialize, Deserialize)]
-// struct Column {
-//     name: String,
-//     value: SerializationType,
-// }
-
 async fn get_root() -> Html<String> {
     let mut env = Environment::new();
     env.set_loader(path_loader("static/templates"));
@@ -409,29 +396,71 @@ async fn apply_entity_schema_sync(
 
     let unique_suffix = format!("{}", req.tenant_id.clone().as_simple());
 
-    let repo = ClickHouseRepository::new("clickhouse://...".to_string());
-
     let tenant_repo = ClickHouseRepository::choose_tenant(unique_suffix.clone());
 
-    let empty = EventJsonSchema::new();
+
     let new: Result<EventJsonSchema, _> = serde_json::from_value(req.schema);
     if new.is_err() {
         println!("EventJsonSchema parser failed {:?}", new);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
-    let new = new.unwrap();
+
 
     let unique_table_name = req.name;
 
-    let migration_plan = make_migration_plan(empty, new);
-    let migration = tenant_repo
-        .execute_init_migration(unique_table_name.clone(), migration_plan, true)
-        .await;
+    let scope_repository = ScopeRepository { pool: &pool };
+    println!("Getting schema {}/{}", req.tenant_id.clone(), unique_table_name.clone());
+    let event_schema_res = scope_repository.get_event_schema(req.tenant_id.clone(), unique_table_name.clone()).await;
+    println!("XX: {:?}", event_schema_res.clone());
 
-    if migration.is_err() {
-        println!("Migration {:?}", migration);
+    let new = new.unwrap();
+
+    if event_schema_res.is_ok() {
+        let event_schema_res = event_schema_res.unwrap();
+        let old: Result<EventJsonSchema, _> = serde_json::from_value(event_schema_res);
+        if old.is_err() {
+            println!("Invalid json {:?}", old);
+        }
+        let old = old.unwrap();
+        let migration_plan = make_migration_plan(old, new.clone());
+        let migration = tenant_repo
+            .execute_migration(unique_table_name.clone(), migration_plan)
+            .await;
+
+        if migration.is_err() {
+            println!("Migration {:?}", migration);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    } else {
+        let empty = EventJsonSchema::new();
+        let migration_plan = make_migration_plan(empty, new.clone());
+        let migration = tenant_repo
+            .execute_init_migration(unique_table_name.clone(), migration_plan, false)
+            .await;
+
+        if migration.is_err() {
+            println!("Migration {:?}", migration);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    let new_schema_value: Value = serde_json::to_value(new).unwrap();
+    let save_res = scope_repository.save_event_schema(req.tenant_id.clone(), unique_table_name.clone(), new_schema_value, by_account_id.clone()).await;
+    println!("Saving schema {}/{}", req.tenant_id.clone(), unique_table_name.clone());
+    if save_res.is_err() {
+        println!("Saving schema failed {:?}", save_res);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
+
+    // let migration_plan = make_migration_plan(empty, new);
+    // let migration = tenant_repo
+    //     .execute_init_migration(unique_table_name.clone(), migration_plan, false)
+    //     .await;
+
+    // if migration.is_err() {
+    //     println!("Migration {:?}", migration);
+    //     return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    // }
 
     Ok("OK".to_string())
 }
@@ -1036,7 +1065,7 @@ pub mod test {
         let response_str = std::str::from_utf8(&body).unwrap();
         let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
         assert_eq!(push_event_response.is_success, false);
-        assert_eq!(push_event_response.message_code.unwrap(), "invalid_units");
+        assert_eq!(push_event_response.message_code.unwrap(), "event_name_is_not_given");
     }
 
     #[rstest]

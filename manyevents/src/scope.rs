@@ -1,5 +1,7 @@
 use crate::DbPool;
+use crate::Value;
 use uuid::Uuid;
+use sqlx::Error;
 
 pub struct ScopeRepository<'a> {
     pub pool: &'a DbPool,
@@ -107,6 +109,54 @@ impl<'a> ScopeRepository<'a> {
             Ok(None) => Err("No entry".to_string()),
             Err(e) => {
                 Err(format!("SQL error in get_tenant_and_storage_credential_by_environment: {}", e))
+            }
+        }
+    }
+
+    pub async fn get_event_schema(&self, tenant_id: Uuid, name: String) -> Result<Value, String> {
+        let res: Result<Option<(Value,)>, _> = sqlx::query_as(
+            "
+            SELECT
+                description
+            FROM event e
+            WHERE
+                tenant_id = $1 AND name = $2
+            LIMIT 1
+            ",
+        )
+        .bind(tenant_id)
+        .bind(name)
+        .fetch_optional(self.pool)
+        .await;
+        match res {
+            Ok(Some((value,))) => Ok(value),
+            Ok(None) => Err("No entry".to_string()),
+            Err(e) => {
+                Err(format!("SQL error in get_event_schema: {}", e))
+            }
+        }
+    }
+
+    pub async fn save_event_schema(&self, tenant_id: Uuid, name: String, set: Value, by_account_id: Uuid) -> Result<(), String> {
+        let res: Result<Option<(_)>, Error> = sqlx::query(
+            "
+            INSERT INTO event
+                (tenant_id, name, description, created_by_account_id)
+            VALUES
+                ($1, $2, $3, $4)
+            ",
+        )
+        .bind(tenant_id)
+        .bind(name)
+        .bind(set)
+        .bind(by_account_id)
+        .fetch_optional(self.pool)
+        .await;
+        match res {
+            Ok(None) => Ok(()),
+            Ok(Some(_)) => Ok(()),
+            Err(e) => {
+                Err(format!("SQL error in get_event_schema: {}", e))
             }
         }
     }
