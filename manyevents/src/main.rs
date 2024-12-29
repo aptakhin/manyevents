@@ -66,6 +66,18 @@ where
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+struct CreateAccountRequest {
+    email: String,
+    password: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct CreateAccountResponse {
+    is_success: bool,
+    auth_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct CreateTenantRequest {
     title: String,
 }
@@ -207,6 +219,35 @@ async fn get_dashboard(Authentificated(auth): Authentificated) -> HtmlOrRedirect
         tmpl.render(context!(push_token_live => "me-push-live-xxxxxx22222", check))
             .unwrap(),
     ))
+}
+
+async fn create_account(
+    State(pool): State<DbPool>,
+    Json(account_request): Json<CreateAccountRequest>,
+) -> Result<Json<CreateAccountResponse>, StatusCode> {
+    let account_repository = AccountRepository { pool: &pool  };
+    let api_auth_repository = ApiAuthRepository { pool: &pool };
+    let account = Account::new(&account_repository);
+
+    let account_inserted = account
+        .signin(account_request.email, account_request.password)
+        .await;
+    if account_inserted.is_err() {
+        return Ok(Json(CreateAccountResponse {
+            is_success: false,
+            auth_token: None,
+        }));
+    }
+
+    let account_inserted = account_inserted.unwrap();
+    let auth_token = ApiAuth::create_new(account_inserted, &api_auth_repository).await;
+    let bearer = auth_token.unwrap().token;
+
+    let response = CreateAccountResponse {
+        is_success: true,
+        auth_token: Some(bearer),
+    };
+    Ok(Json(response))
 }
 
 async fn create_tenant(
@@ -472,6 +513,7 @@ async fn routes_app() -> Router<()> {
         .route("/docs", get(get_docs))
         .route("/dashboard", get(get_dashboard))
         .route("/push-api/v0-unstable/push-event", post(push_event))
+        .route("/manage-api/v0-unstable/create-account", post(create_account))
         .route("/manage-api/v0-unstable/create-tenant", post(create_tenant))
         .route(
             "/manage-api/v0-unstable/link-tenant-account",
@@ -617,6 +659,40 @@ pub mod test {
         .await;
 
         assert_eq!(tenant_response.is_success, true);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_create_account(#[future] app: Router<()>, #[future] pool: DbPool) {
+        let pool = pool.await;
+        let random_email = Uuid::new_v4();
+        let account_request = CreateAccountRequest {
+            email: encode(random_email),
+            password: "123".to_string(),
+        };
+        let account_request_str = serde_json::to_string(&account_request).unwrap();
+
+        let response = app
+            .await
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .header("Content-Type", "application/json")
+                    .uri("/manage-api/v0-unstable/create-account")
+                    .body(Body::from(account_request_str))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body_str = std::str::from_utf8(&body).unwrap();
+        let account_response: CreateAccountResponse = serde_json::from_str(&body_str).unwrap();
+        assert!(account_response.is_success);
+        assert!(account_response.auth_token.is_some());
+        assert!(!account_response.auth_token.unwrap().is_empty());
     }
 
     #[rstest]
