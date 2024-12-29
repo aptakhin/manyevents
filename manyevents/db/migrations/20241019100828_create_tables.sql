@@ -44,17 +44,6 @@ CREATE TABLE tenant_and_account (
     deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL
 );
 
-CREATE TABLE scope (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    tenant_id UUID REFERENCES tenant (id),
-    created_by_account_id UUID REFERENCES account (id),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
-    slug VARCHAR NOT NULL,
-    title VARCHAR NOT NULL
-);
-
 CREATE TABLE storage_credential (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id UUID REFERENCES tenant (id),
@@ -68,7 +57,7 @@ CREATE TABLE storage_credential (
 
 CREATE TABLE environment (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    tenant_id UUID REFERENCES tenant (id),
+    storage_credential_id UUID REFERENCES storage_credential (id),
     created_by_account_id UUID REFERENCES account (id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -89,7 +78,7 @@ CREATE TABLE push_token (
     UNIQUE(token)
 );
 
-CREATE TABLE entity (
+CREATE TABLE event (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id UUID REFERENCES tenant (id),
     created_by_account_id UUID REFERENCES account (id),

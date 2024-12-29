@@ -36,7 +36,7 @@ mod tenant;
 
 use crate::auth::{
     ensure_header_authentification, Account, AccountActionOnTenant, AccountRepository, ApiAuth,
-    ApiAuthRepository, Authentificated,
+    ApiAuthRepository, Authentificated, ensure_push_header_authentification, PushApiAuthRepository, PushApiAuth,
 };
 use crate::ch::{insert_smth, make_migration_plan, ChColumn, ClickHouseRepository};
 use crate::schema::{read_event_data, EventJsonSchema, JsonSchemaProperty, SerializationType};
@@ -414,23 +414,33 @@ async fn apply_entity_schema_sync(
     Ok("OK".to_string())
 }
 
-async fn push_event(BufferRequestBody(body): BufferRequestBody) -> Json<PushEventResponse> {
+async fn push_event(
+    auth: TypedHeader<Authorization<Bearer>>,
+    State(pool): State<DbPool>,
+    BufferRequestBody(body): BufferRequestBody,
+) -> Result<Json<PushEventResponse>, StatusCode> {
+    let auth_response = ensure_push_header_authentification(auth, &pool).await;
+    if auth_response.is_err() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    // let by_account_id = auth_response.clone().unwrap().0;
+
     let body_str = std::str::from_utf8(&body).unwrap();
     let data: Result<Value, _> = serde_json::from_str(&body_str);
     if data.is_err() {
-        return Json(PushEventResponse {
+        return Ok(Json(PushEventResponse {
             is_success: false,
             message_code: Some(data.unwrap_err().to_string()),
-        });
+        }));
     }
     let data = data.unwrap();
     let result = read_event_data(&data);
 
     if result.is_err() {
-        return Json(PushEventResponse {
+        return Ok(Json(PushEventResponse {
             is_success: false,
             message_code: Some(result.unwrap_err().message_code.to_string()),
-        });
+        }));
     }
 
     let event = result.unwrap();
@@ -463,24 +473,24 @@ async fn push_event(BufferRequestBody(body): BufferRequestBody) -> Json<PushEven
     }
 
     if table_name.is_none() {
-        return Json(PushEventResponse {
+        return Ok(Json(PushEventResponse {
             is_success: false,
             message_code: Some("event_name_is_not_given".to_string()),
-        });
+        }));
     }
     let res = insert_smth(table_name.unwrap().to_string(), columns).await;
 
     if res.is_err() {
-        return Json(PushEventResponse {
+        return Ok(Json(PushEventResponse {
             is_success: false,
             message_code: Some(format!("internal_error: {}", res.unwrap_err())),
-        });
+        }));
     }
 
-    Json(PushEventResponse {
+    Ok(Json(PushEventResponse {
         is_success: true,
         message_code: None,
-    })
+    }))
 }
 
 struct BufferRequestBody(Bytes);
@@ -580,7 +590,7 @@ pub mod test {
         account_inserted.expect("Should be inserted")
     }
 
-    async fn create_tenant(
+    pub async fn create_tenant(
         title: String,
         bearer: String,
         app: &Router<()>,
@@ -826,7 +836,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
-    async fn test_push_event(#[future] app: Router<()>) {
+    async fn test_push_event(#[future] app: Router<()>, #[future] pool: DbPool) {
         let push_request_str = r#"{
             "x-manyevents-name": "chrs_async_insert",
             "span_id": "xxxx",
@@ -837,13 +847,29 @@ pub mod test {
             "base_message": "test message"
         }
         "#;
+        let app = app.await;
+        let pool = pool.await;
+        let scope_repository = ScopeRepository { pool: &pool };
+        let api_auth_repository = ApiAuthRepository { pool: &pool };
+        let push_api_auth_repository = PushApiAuthRepository { pool: &pool };
+        let account_id = add_random_email_account(&pool).await;
+        let auth_token = ApiAuth::create_new(account_id, &api_auth_repository).await;
+        let tenant_id =
+            create_tenant("test-tenant".to_string(), auth_token.unwrap().token, &app).await;
+        let tenant_id = tenant_id.id.unwrap();
+        let storage_credential_id = scope_repository.create_storage_credential(tenant_id, "clickhouse".to_string(), "clickhouse://...".to_string(), account_id).await;
+        let storage_credential_id = storage_credential_id.unwrap();
+        let environment_id = scope_repository.create_environment(storage_credential_id, "testptile".to_string(), "testslug".to_string(), account_id).await;
+        let environment_id = environment_id.unwrap();
+        let auth = PushApiAuth::create_new(environment_id, &push_api_auth_repository, account_id).await;
+        let push_token = auth.unwrap().token;
 
         let response = app
-            .await
             .oneshot(
                 Request::builder()
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", push_token))
                     .uri("/push-api/v0-unstable/push-event")
                     .body(Body::from(push_request_str))
                     .unwrap(),
@@ -860,15 +886,31 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
-    async fn test_push_event_failed(#[future] app: Router<()>) {
+    async fn test_push_event_failed(#[future] app: Router<()>, #[future] pool: DbPool) {
+        let app = app.await;
+        let pool = pool.await;
         let push_request_str = r#"{ "event": {} }"#;
+        let scope_repository = ScopeRepository { pool: &pool };
+        let api_auth_repository = ApiAuthRepository { pool: &pool };
+        let push_api_auth_repository = PushApiAuthRepository { pool: &pool };
+        let account_id = add_random_email_account(&pool).await;
+        let auth_token = ApiAuth::create_new(account_id, &api_auth_repository).await;
+        let tenant_id =
+            create_tenant("test-tenant".to_string(), auth_token.unwrap().token, &app).await;
+        let tenant_id = tenant_id.id.unwrap();
+        let storage_credential_id = scope_repository.create_storage_credential(tenant_id, "clickhouse".to_string(), "clickhouse://...".to_string(), account_id).await;
+        let storage_credential_id = storage_credential_id.unwrap();
+        let environment_id = scope_repository.create_environment(storage_credential_id, "testptile".to_string(), "testslug".to_string(), account_id).await;
+        let environment_id = environment_id.unwrap();
+        let auth = PushApiAuth::create_new(environment_id, &push_api_auth_repository, account_id).await;
+        let push_token = auth.unwrap().token;
 
         let response = app
-            .await
             .oneshot(
                 Request::builder()
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", push_token))
                     .uri("/push-api/v0-unstable/push-event")
                     .body(Body::from(push_request_str))
                     .unwrap(),
@@ -882,6 +924,34 @@ pub mod test {
         let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
         assert_eq!(push_event_response.is_success, false);
         assert_eq!(push_event_response.message_code.unwrap(), "invalid_units");
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_push_event_401(#[future] app: Router<()>) {
+        let push_request_str = r#"{
+            "x-manyevents-tenant-id": "main",
+            "x-manyevents-name": "main",
+            "span_id": "xxxx"
+        }
+        "#;
+        let bearer = "pt-xxx";
+
+        let response = app
+            .await
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", bearer))
+                    .uri("/push-api/v0-unstable/push-event")
+                    .body(Body::from(push_request_str))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[rstest]

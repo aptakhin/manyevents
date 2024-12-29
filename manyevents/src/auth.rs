@@ -7,6 +7,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::settings::Settings;
+use crate::scope::{ScopeRepository};
 use axum::{
     async_trait,
     extract::{FromRef, FromRequest, Request},
@@ -117,6 +118,25 @@ pub async fn ensure_header_authentification(
     let resp = ApiAuth::from(header_token, &api_auth_repository).await;
     match resp {
         Ok(auth) => Ok(Authentificated(auth.account_id)),
+        Err(_) => Err(AuthError::InvalidToken),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PushApiInfo {
+    // pub tenant_id: Uuid,
+    pub environment_id: Uuid,
+}
+
+pub async fn ensure_push_header_authentification(
+    header: TypedHeader<Authorization<Bearer>>,
+    pool: &DbPool,
+) -> Result<PushApiInfo, AuthError> {
+    let header_token = header.0.token().to_string();
+    let push_api_repository = PushApiAuthRepository { pool: pool };
+    let resp = PushApiAuth::from(header_token, &push_api_repository).await;
+    match resp {
+        Ok(auth) => Ok(PushApiInfo { environment_id: auth.environment_id }),
         Err(_) => Err(AuthError::InvalidToken),
     }
 }
@@ -341,16 +361,120 @@ impl<'a> ApiAuth<'a> {
     }
 }
 
-pub struct PushAuth {
-    pub tenant_id: Uuid,
+#[derive(Debug)]
+pub struct PushApiAuthRepository<'a> {
+    pub pool: &'a DbPool,
+}
+
+impl<'a> PushApiAuthRepository<'a> {
+    pub async fn add_token(&self, token: String, environment_id: Uuid, by_account_id: Uuid) -> Result<Uuid, String> {
+        let result: Result<(bool, Uuid), String> = sqlx::query_as(
+            "
+            INSERT INTO push_token
+            (token, environment_id, created_by_account_id)
+            VALUES ($1, $2, $3)
+            RETURNING true, id
+            ",
+        )
+        .bind(token.clone())
+        .bind(environment_id)
+        .bind(by_account_id)
+        .fetch_one(self.pool)
+        .await
+        .and_then(|r| Ok(r))
+        .or_else(|e| {
+            println!("Database query error: {}", e);
+            Err("nooo".to_string())
+        });
+
+        match result {
+            Ok((_, id)) => Ok(id),
+            Err(_) => Err("cant_add".to_string()),
+        }
+    }
+
+    pub async fn check_token(&self, token: String) -> Result<(Uuid,), String> {
+        let result: Result<(Uuid,), String> = sqlx::query_as(
+            "
+            SELECT
+                environment_id
+            FROM push_token
+            WHERE
+                token = $1
+            LIMIT 1
+            ",
+        )
+        .bind(token.clone())
+        .fetch_one(self.pool)
+        .await
+        .and_then(|r| Ok(r))
+        .or_else(|e| {
+            println!("Database query error: {}", e);
+            Err("nooo".to_string())
+        });
+
+        match result {
+            Ok(environment_id) => Ok(environment_id),
+            Err(_) => Err("invalid_token".to_string()),
+        }
+    }
+
+    pub fn generate_token(tenant_id: Uuid, environment_id: Uuid) -> String {
+        let secret_key = rand::thread_rng().gen::<[u8; 32]>();
+        let secure_token =
+            Token::new(encode(tenant_id).clone(), &secret_key).expect("No token error");
+       format!("pt-{}", secure_token.token)
+    }
+}
+
+#[derive(Debug)]
+pub struct PushApiAuth<'a> {
     pub environment_id: Uuid,
+    pub token: String,
+    api_auth_repo: &'a PushApiAuthRepository<'a>,
+}
+
+impl<'a> PushApiAuth<'a> {
+    pub async fn from(
+        token: String,
+        api_auth_repo: &'a PushApiAuthRepository<'a>,
+    ) -> Result<PushApiAuth, String> {
+        let check_resp = api_auth_repo.check_token(token.clone()).await;
+        match check_resp {
+            Ok((environment_id,)) => Ok(PushApiAuth {
+                // tenant_id,
+                environment_id,
+                token,
+                api_auth_repo,
+            }),
+            Err(_) => Err("invalid_token".to_string()),
+        }
+    }
+
+    pub async fn create_new(
+        environment_id: Uuid,
+        api_auth_repo: &'a PushApiAuthRepository<'a>,
+        by_account_id: Uuid,
+    ) -> Result<PushApiAuth, String> {
+        let token = ApiAuth::generate_token(environment_id);
+        let auth_result = api_auth_repo.add_token(token.clone(), environment_id, by_account_id).await;
+        if auth_result.is_err() {
+            return Err("invalid_token".to_string());
+        }
+        Ok(PushApiAuth {
+            environment_id,
+            token,
+            api_auth_repo,
+        })
+    }
 }
 
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use crate::test::{add_random_email_account, pool};
+    use crate::test::{add_random_email_account, pool, create_tenant, app};
     use rstest::rstest;
+    use axum::Router;
 
     #[rstest]
     #[tokio::test]
@@ -389,5 +513,33 @@ pub mod test {
         let check_auth = ApiAuth::from("wrong_token".to_string(), &api_auth_repository).await;
 
         assert_eq!(check_auth.is_err(), true);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_push_auth_token_successful(#[future] app: Router<()>, #[future] pool: DbPool) {
+        let app = app.await;
+        let pool = pool.await;
+        let scope_repository = ScopeRepository { pool: &pool };
+        let api_auth_repository = ApiAuthRepository { pool: &pool };
+        let push_api_auth_repository = PushApiAuthRepository { pool: &pool };
+        let account_id = add_random_email_account(&pool).await;
+        let auth_token = ApiAuth::create_new(account_id, &api_auth_repository).await;
+        let tenant_id =
+            create_tenant("test-tenant".to_string(), auth_token.unwrap().token, &app).await;
+        let tenant_id = tenant_id.id.unwrap();
+        let storage_credential_id = scope_repository.create_storage_credential(tenant_id, "clickhouse".to_string(), "clickhouse://...".to_string(), account_id).await;
+        let storage_credential_id = storage_credential_id.unwrap();
+        let environment_id = scope_repository.create_environment(storage_credential_id, "testptile".to_string(), "testslug".to_string(), account_id).await;
+        let environment_id = environment_id.unwrap();
+        let auth = PushApiAuth::create_new(environment_id, &push_api_auth_repository, account_id).await;
+        let token = auth.unwrap().token;
+        assert!(!token.is_empty());
+
+        let auth = PushApiAuth::from(token, &push_api_auth_repository).await;
+
+        assert!(auth.is_ok());
+        let auth_struct = auth.unwrap();
+        assert_eq!(auth_struct.environment_id, environment_id);
     }
 }
