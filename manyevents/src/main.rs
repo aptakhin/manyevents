@@ -74,6 +74,8 @@ struct CreateTenantRequest {
 struct CreateTenantResponse {
     is_success: bool,
     id: Option<Uuid>,
+    clickhouse_read_dsn: String,
+    clickhouse_write_dsn: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -277,6 +279,8 @@ async fn create_tenant(
     let response = CreateTenantResponse {
         is_success: true,
         id: Some(created_tenant_resp.clone().unwrap()),
+        clickhouse_read_dsn: cred.to_dsn(),
+        clickhouse_write_dsn: String::new(),
     };
     Ok(Json(response))
 }
@@ -340,34 +344,6 @@ async fn apply_entity_schema_sync(
     let unique_suffix = format!("{}", req.tenant_id.clone().as_simple());
 
     let repo = ClickHouseRepository::new("clickhouse://...".to_string());
-
-    // let cred = repo
-    //     .create_credential(unique_suffix.clone(), "my_password".to_string())
-    //     .await;
-
-    // println!("Unique_suffix {}", unique_suffix.clone());
-
-    // assert!(cred.is_ok());
-    // let cred = cred.unwrap();
-
-    // let scope = ScopeRepository::new(&pool);
-    // if !scope
-    //     .has_tenant_storage_credential(req.tenant_id.clone())
-    //     .await
-    // {
-    //     let storage_credential_resp = scope
-    //         .create_storage_credential(
-    //             req.tenant_id.clone(),
-    //             "clickhouse".to_string(),
-    //             cred.to_dsn(),
-    //             by_account_id.clone(),
-    //         )
-    //         .await;
-    //     if storage_credential_resp.is_err() {
-    //         println!("storage_credential_resp {:?}", storage_credential_resp);
-    //         return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    //     }
-    // }
 
     let tenant_repo = ClickHouseRepository::choose_tenant(unique_suffix.clone());
 
@@ -586,6 +562,7 @@ pub mod test {
         let body_str = std::str::from_utf8(&body).unwrap();
         let tenant_response: CreateTenantResponse = serde_json::from_str(&body_str).unwrap();
         assert_eq!(tenant_response.is_success, true);
+        assert!(!tenant_response.clickhouse_read_dsn.is_empty());
         tenant_response
     }
 

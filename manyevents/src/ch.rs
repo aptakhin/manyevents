@@ -6,6 +6,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::settings::Settings;
 use crate::schema::{EventJsonSchema, JsonSchemaProperty, SerializationType};
 
 #[derive(Row, Deserialize, Debug)]
@@ -55,6 +56,7 @@ pub async fn insert_smth(table_name: String, rows: Vec<ChColumn>) -> Result<(), 
 
 pub struct ClickHouseTenantCredential {
     pub role: String,
+    pub db_host: String,
     pub db_name: String,
     pub db_user: String,
     pub db_password: String,
@@ -64,7 +66,7 @@ impl ClickHouseTenantCredential {
     pub fn to_dsn(&self) -> String {
         format!(
             "clickhouse://{}:{}@{}/{}",
-            self.db_user, self.db_password, "localhost:8123", self.db_name
+            self.db_user, self.db_password, self.db_host, self.db_name
         )
     }
 }
@@ -104,8 +106,17 @@ impl ClickHouseRepository {
         unique_suffix: String,
         db_password: String,
     ) -> Result<ClickHouseTenantCredential, ()> {
-        let role = format!("admin_role_{}", unique_suffix);
         let db_name = format!("db_{}", unique_suffix);
+
+        let res_2 = self
+            .client
+            .query("CREATE DATABASE ?")
+            .bind(Identifier(db_name.as_str()))
+            .execute()
+            .await;
+        println!("CH {:?}", res_2);
+
+        let role = format!("admin_role_{}", unique_suffix);
         let db_user = format!("user_{}", unique_suffix);
 
         let res_3 = self
@@ -115,14 +126,6 @@ impl ClickHouseRepository {
             .execute()
             .await;
         println!("CH {:?}", res_3);
-
-        let res_2 = self
-            .client
-            .query("CREATE DATABASE ?")
-            .bind(Identifier(db_name.as_str()))
-            .execute()
-            .await;
-        println!("CH {:?}", res_2);
 
         let res_4 = self
             .client
@@ -143,8 +146,10 @@ impl ClickHouseRepository {
             .await;
         println!("CH {:?}", res);
 
+        let db_host = Settings::read_settings().clickhouse_external_host;
         Ok(ClickHouseTenantCredential {
             role,
+            db_host,
             db_name,
             db_user,
             db_password,

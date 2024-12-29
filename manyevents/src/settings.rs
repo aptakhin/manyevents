@@ -4,6 +4,7 @@ pub struct Settings {
     pub secret_key: String,
     pub postgres_dsn: String,
     pub clickhouse_dsn: String,
+    pub clickhouse_external_host: String,
 }
 
 impl Settings {
@@ -11,10 +12,12 @@ impl Settings {
         let secret_key = env::var("MANYEVENTS_SECRET_KEY").unwrap();
         let postgres_dsn = Self::build_postgres_dsn();
         let clickhouse_dsn = Self::build_clickhouse_dsn();
+        let clickhouse_external_host = env::var("MANYEVENTS_CH_EXTERNAL_HOST").unwrap();
         Settings {
             secret_key,
             postgres_dsn,
             clickhouse_dsn,
+            clickhouse_external_host,
         }
     }
 
