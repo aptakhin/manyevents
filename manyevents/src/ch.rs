@@ -4,6 +4,7 @@ use clickhouse::Row;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use clickhouse::error::Error;
 
 use crate::schema::{EntityJsonSchema, JsonSchemaProperty, SerializationType};
 
@@ -13,38 +14,38 @@ pub struct ChColumn {
     pub value: SerializationType,
 }
 
-pub async fn insert_smth(table_name: String, rows: Vec<ChColumn>) {
+pub async fn insert_smth(table_name: String, rows: Vec<ChColumn>) -> Result<(), Error> {
     let client = Client::default()
         .with_url("http://localhost:8123")
         .with_database("manyevents")
         .with_user("username")
         .with_password("password")
         // https://clickhouse.com/docs/en/operations/settings/settings#async-insert
-        .with_option("async_insert", "1")
+        .with_option("async_insert", "0")
         // https://clickhouse.com/docs/en/operations/settings/settings#wait-for-async-insert
-        .with_option("wait_for_async_insert", "0");
+        .with_option("wait_for_async_insert", "1");
 
-    let x = client
-        .query(
-            "
-            CREATE OR REPLACE TABLE ? (
-                base_timestamp DateTime64(3),
-                base_parent_span_id String,
-                base_message String,
-                span_id String,
-                span_start_time DateTime64(3),
-                span_end_time DateTime64(3),
-            )
-            ENGINE = MergeTree
-            ORDER BY base_timestamp
-            PARTITION BY toYYYYMMDD(base_timestamp)
-            ",
-        )
-        .bind(Identifier(&table_name))
-        .execute()
-        .await;
+    // let x = client
+    //     .query(
+    //         "
+    //         CREATE OR REPLACE TABLE ? (
+    //             base_timestamp DateTime64(3),
+    //             base_parent_span_id String,
+    //             base_message String,
+    //             span_id String,
+    //             span_start_time DateTime64(3),
+    //             span_end_time DateTime64(3),
+    //         )
+    //         ENGINE = MergeTree
+    //         ORDER BY base_timestamp
+    //         PARTITION BY toYYYYMMDD(base_timestamp)
+    //         ",
+    //     )
+    //     .bind(Identifier(&table_name))
+    //     .execute()
+    //     .await;
 
-    println!("Q: {:?}", x);
+    // println!("Q: {:?}", x);
 
     let column_names_str = rows
         .iter()
@@ -57,7 +58,7 @@ pub async fn insert_smth(table_name: String, rows: Vec<ChColumn>) {
         "INSERT INTO ? ({}) VALUES ({})",
         column_names_str, placeholders_str
     );
-    println!("sss: {:?}", query);
+    println!("sss: {}/{:?}", table_name, query);
     let mut y = client.query(&query).bind(Identifier(&table_name));
 
     for row in rows.iter() {
@@ -73,6 +74,7 @@ pub async fn insert_smth(table_name: String, rows: Vec<ChColumn>) {
     let yy = y.execute().await;
 
     println!("I: {:?}", yy);
+    yy
 }
 
 pub struct ClickHouseTenantCredential {

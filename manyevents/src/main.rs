@@ -39,7 +39,7 @@ use crate::auth::{
     ApiAuthRepository, Authentificated,
 };
 use crate::ch::{insert_smth, make_migration_plan, ChColumn, ClickHouseRepository};
-use crate::schema::{read_event_data, EntityJsonSchema, JsonSchemaProperty};
+use crate::schema::{read_event_data, EntityJsonSchema, JsonSchemaProperty, SerializationType};
 use crate::scope::ScopeRepository;
 use crate::tenant::{Tenant, TenantRepository};
 
@@ -99,18 +99,18 @@ struct PushEventResponse {
     message_code: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-enum SerializationType {
-    Int(i64),
-    Float(f64),
-    Str(String),
-}
+// #[derive(Debug, Serialize, Deserialize)]
+// enum SerializationType {
+//     Int(i64),
+//     Float(f64),
+//     Str(String),
+// }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Column {
-    name: String,
-    value: SerializationType,
-}
+// #[derive(Debug, Serialize, Deserialize)]
+// struct Column {
+//     name: String,
+//     value: SerializationType,
+// }
 
 async fn get_root() -> Html<String> {
     let mut env = Environment::new();
@@ -353,7 +353,14 @@ async fn apply_entity_schema_sync(
 
 async fn push_event(BufferRequestBody(body): BufferRequestBody) -> Json<PushEventResponse> {
     let body_str = std::str::from_utf8(&body).unwrap();
-    let data: Value = serde_json::from_str(&body_str).unwrap();
+    let data: Result<Value, _> = serde_json::from_str(&body_str);
+    if data.is_err() {
+        return Json(PushEventResponse {
+            is_success: false,
+            message_code: Some(data.unwrap_err().to_string()),
+        });
+    }
+    let data = data.unwrap();
     let result = read_event_data(&data);
 
     if result.is_err() {
@@ -369,18 +376,39 @@ async fn push_event(BufferRequestBody(body): BufferRequestBody) -> Json<PushEven
 
     let mut columns: Vec<ChColumn> = vec![];
 
+    let mut table_name = None;
+
     for unit in event.units.iter() {
         for value in unit.value.iter() {
             let column = ChColumn {
-                name: format!("{}_{}", unit.name, value.name),
+                name: if unit.name != "" { format!("{}_{}", unit.name, value.name) } else { value.name.clone() },
                 value: value.value.clone(),
             };
             println!("ins: {}: {:?}", column.name.clone(), value.value.clone());
-            columns.push(column);
+            if column.name == "x-manyevents-name" {
+                if let SerializationType::Str(str) = value.value.clone() {
+                    table_name = Some(str.clone());
+                }
+            } else {
+                columns.push(column);
+            }
         }
     }
 
-    insert_smth("chrs_async_insert".to_string(), columns).await;
+    if table_name.is_none() {
+        return Json(PushEventResponse {
+            is_success: false,
+            message_code: Some("event_name_is_not_given".to_string()),
+        })
+    }
+    let res = insert_smth(table_name.unwrap().to_string(), columns).await;
+
+    if res.is_err() {
+        return Json(PushEventResponse {
+            is_success: false,
+            message_code: Some(format!("internal_error: {}", res.unwrap_err())),
+        })
+    }
 
     Json(PushEventResponse {
         is_success: true,
@@ -693,26 +721,61 @@ pub mod test {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
+    // #[rstest]
+    // #[tokio::test]
+    // async fn test_push_component_event(#[future] app: Router<()>) {
+    //     let push_request_str = r#"{
+    //         "event": {
+    //             "name": "main",
+    //             "units": [
+    //                 {
+    //                     "type": "span",
+    //                     "id": "xxxx",
+    //                     "start_time": 1234567890,
+    //                     "end_time": 1234567892
+    //                 },
+    //                 {
+    //                     "type": "base",
+    //                     "timestamp": 1234567892,
+    //                     "parent_span_id": "xxxx",
+    //                     "message": "test message"
+    //                 }
+    //             ]
+    //         }
+    //     }
+    //     "#;
+
+    //     let response = app
+    //         .await
+    //         .oneshot(
+    //             Request::builder()
+    //                 .method(http::Method::POST)
+    //                 .header("Content-Type", "application/json")
+    //                 .uri("/api/push/v1/push-event")
+    //                 .body(Body::from(push_request_str))
+    //                 .unwrap(),
+    //         )
+    //         .await
+    //         .unwrap();
+
+    //     assert_eq!(response.status(), StatusCode::OK);
+    //     let body = response.into_body().collect().await.unwrap().to_bytes();
+    //     let response_str = std::str::from_utf8(&body).unwrap();
+    //     let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
+    //     assert_eq!(push_event_response.is_success, true, "response {:?}", push_event_response);
+    // }
+
     #[rstest]
     #[tokio::test]
-    async fn test_push_component_event(#[future] app: Router<()>) {
+    async fn test_push_event(#[future] app: Router<()>) {
         let push_request_str = r#"{
-            "event": {
-                "units": [
-                    {
-                        "type": "span",
-                        "id": "xxxx",
-                        "start_time": 1234567890,
-                        "end_time": 1234567892
-                    },
-                    {
-                        "type": "base",
-                        "timestamp": 1234567892,
-                        "parent_span_id": "xxxx",
-                        "message": "test message"
-                    }
-                ]
-            }
+            "x-manyevents-name": "chrs_async_insert",
+            "span_id": "xxxx",
+            "span_start_time": 1234567890,
+            "span_end_time": 1234567892,
+            "base_timestamp": 1234567892,
+            "base_parent_span_id": "xxxx",
+            "base_message": "test message"
         }
         "#;
 
