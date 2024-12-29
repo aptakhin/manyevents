@@ -39,7 +39,7 @@ use crate::auth::{
     ApiAuthRepository, Authentificated,
 };
 use crate::ch::{insert_smth, make_migration_plan, ChColumn, ClickHouseRepository};
-use crate::schema::{read_event_data, EntityJsonSchema, JsonSchemaProperty, SerializationType};
+use crate::schema::{read_event_data, EventJsonSchema, JsonSchemaProperty, SerializationType};
 use crate::scope::ScopeRepository;
 use crate::tenant::{Tenant, TenantRepository};
 
@@ -76,7 +76,7 @@ struct CreateTenantResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-struct ApplyEntitySchemaRequest {
+struct ApplyEventSchemaRequest {
     tenant_id: Uuid,
     schema: Value,
 }
@@ -276,7 +276,7 @@ async fn link_tenant_account(
 async fn apply_entity_schema_sync(
     auth: TypedHeader<Authorization<Bearer>>,
     State(pool): State<DbPool>,
-    Json(req): Json<ApplyEntitySchemaRequest>,
+    Json(req): Json<ApplyEventSchemaRequest>,
 ) -> Result<String, StatusCode> {
     let auth_response = ensure_header_authentification(auth, &pool).await;
     if auth_response.is_err() {
@@ -328,10 +328,10 @@ async fn apply_entity_schema_sync(
 
     let tenant_repo = ClickHouseRepository::choose_tenant(unique_suffix.clone());
 
-    let empty = EntityJsonSchema::new();
-    let new: Result<EntityJsonSchema, _> = serde_json::from_value(req.schema);
+    let empty = EventJsonSchema::new();
+    let new: Result<EventJsonSchema, _> = serde_json::from_value(req.schema);
     if new.is_err() {
-        println!("EntityJsonSchema parser failed {:?}", new);
+        println!("EventJsonSchema parser failed {:?}", new);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
     let new = new.unwrap();
@@ -900,7 +900,7 @@ pub mod test {
         let bearer = auth_token.unwrap().token;
         let tenant = create_tenant("test-tenant".to_string(), bearer.clone(), &app).await;
 
-        let req = ApplyEntitySchemaRequest {
+        let req = ApplyEventSchemaRequest {
             tenant_id: tenant.id.unwrap(),
             schema: json!({
                 "type": "object",

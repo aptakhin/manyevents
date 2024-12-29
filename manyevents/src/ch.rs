@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use clickhouse::error::Error;
 
-use crate::schema::{EntityJsonSchema, JsonSchemaProperty, SerializationType};
+use crate::schema::{EventJsonSchema, JsonSchemaProperty, SerializationType};
 
 #[derive(Row, Deserialize, Debug)]
 pub struct ChColumn {
@@ -332,7 +332,7 @@ pub struct ChTableMigration {
     pub partition_by: ChColumnMigrationStatus<String>,
 }
 
-pub fn make_migration_plan(from: EntityJsonSchema, to: EntityJsonSchema) -> ChTableMigration {
+pub fn make_migration_plan(from: EventJsonSchema, to: EventJsonSchema) -> ChTableMigration {
     let mut columns: Vec<ChColumnMigration> = vec![];
 
     for (name, to_property) in &to.properties {
@@ -500,7 +500,7 @@ pub mod test {
 
     #[rstest]
     fn diff_entities_same_schema() {
-        let mut the_same = EntityJsonSchema::new();
+        let mut the_same = EventJsonSchema::new();
         the_same.x_manyevents_ch_order_by = "name".to_string();
         the_same.properties = HashMap::from([(
             "name".to_string(),
@@ -516,8 +516,8 @@ pub mod test {
 
     #[rstest]
     fn diff_entities_new_field() {
-        let empty = EntityJsonSchema::new();
-        let mut new = EntityJsonSchema::new();
+        let empty = EventJsonSchema::new();
+        let mut new = EventJsonSchema::new();
         new.x_manyevents_ch_order_by = "name".to_string();
         new.properties = HashMap::from([(
             "name".to_string(),
@@ -533,7 +533,7 @@ pub mod test {
 
     #[rstest]
     fn diff_entities_schema_changed_type() {
-        let mut old = EntityJsonSchema::new();
+        let mut old = EventJsonSchema::new();
         old.x_manyevents_ch_order_by = "name".to_string();
         old.properties = HashMap::from([(
             "name".to_string(),
@@ -542,7 +542,7 @@ pub mod test {
                 x_manyevents_ch_type: "String".to_string(),
             },
         )]);
-        let mut new = EntityJsonSchema::new();
+        let mut new = EventJsonSchema::new();
         new.x_manyevents_ch_order_by = "name".to_string();
         new.properties = HashMap::from([(
             "name".to_string(),

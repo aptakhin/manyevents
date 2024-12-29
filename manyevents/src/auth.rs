@@ -19,12 +19,6 @@ use axum_extra::{
 use rand::Rng;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Deserialize, Debug)]
-pub struct AuthEntity {
-    pub id: Uuid,
-    pub type_: String,
-}
-
 #[derive(Deserialize, Debug, Clone)]
 pub enum AuthError {
     InvalidToken,

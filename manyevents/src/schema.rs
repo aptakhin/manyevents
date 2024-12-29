@@ -147,7 +147,7 @@ impl ComponentJsonSchema {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct EntityJsonSchema {
+pub struct EventJsonSchema {
     #[serde(rename = "x-manyevents-ch-order-by")]
     pub x_manyevents_ch_order_by: String,
 
@@ -160,9 +160,9 @@ pub struct EntityJsonSchema {
     pub properties: HashMap<String, JsonSchemaProperty>,
 }
 
-impl EntityJsonSchema {
-    pub fn new() -> EntityJsonSchema {
-        EntityJsonSchema {
+impl EventJsonSchema {
+    pub fn new() -> EventJsonSchema {
+        EventJsonSchema {
             x_manyevents_ch_order_by: String::new(),
             x_manyevents_ch_partition_by: String::new(),
             x_manyevents_ch_partition_by_func: None,
@@ -250,7 +250,7 @@ pub mod test {
             "required": ["base_timestamp", "base_name"],
         });
 
-        let entity: Result<EntityJsonSchema, _> = serde_json::from_value(js);
+        let entity: Result<EventJsonSchema, _> = serde_json::from_value(js);
 
         assert!(entity.is_ok());
         let entity = entity.unwrap();
