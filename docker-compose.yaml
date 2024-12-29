@@ -1,0 +1,19 @@
+services:
+  clickhouse:
+    image: clickhouse:24.10.2.80
+    container_name: clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    restart: unless-stopped
+    env_file:
+    - .env
+
+  postgres:
+    image: postgres:17
+    container_name: postgres
+    restart: unless-stopped
+    env_file:
+    - .env
+    ports:
+      - $POSTGRES_PORT:$POSTGRES_PORT
