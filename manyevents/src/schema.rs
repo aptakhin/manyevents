@@ -59,8 +59,7 @@ pub fn read_event_data(event_root: &Value) -> Result<Event, EventError> {
             name: String::new(),
             value: unit_values,
         });
-    }
-    else {
+    } else {
         if !event.unwrap().is_object() {
             return Err(EventError {
                 message_code: "invalid_event",

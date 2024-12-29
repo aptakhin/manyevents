@@ -223,11 +223,50 @@ async fn create_tenant(
     if created_tenant_resp.is_err() {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
+    let tenant_id = created_tenant_resp.clone().unwrap();
     let link_resp = tenant
-        .link_account(created_tenant_resp.clone().unwrap(), by_account_id.clone())
+        .link_account(tenant_id.clone(), by_account_id.clone())
         .await;
     if link_resp.is_err() {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // let action = AccountActionOnTenant::CanLinkAccount;
+    // let account_repository = AccountRepository { pool: &pool };
+    // let ensure_response = Account::new(&account_repository)
+    //     .ensure_permissions_on_tenant(by_account_id.clone(), req.tenant_id, action)
+    //     .await;
+    // if ensure_response.is_err() {
+    //     return Err(StatusCode::UNAUTHORIZED);
+    // }
+
+    let unique_suffix = format!("{}", tenant_id.clone().as_simple());
+
+    let repo = ClickHouseRepository::new("clickhouse://...".to_string());
+
+    let cred = repo
+        .create_credential(unique_suffix.clone(), "my_password".to_string())
+        .await;
+
+    println!("Unique_suffix {}", unique_suffix.clone());
+
+    assert!(cred.is_ok());
+    let cred = cred.unwrap();
+
+    let scope = ScopeRepository::new(&pool);
+    if !scope.has_tenant_storage_credential(tenant_id.clone()).await {
+        let storage_credential_resp = scope
+            .create_storage_credential(
+                tenant_id.clone(),
+                "clickhouse".to_string(),
+                cred.to_dsn(),
+                by_account_id.clone(),
+            )
+            .await;
+        if storage_credential_resp.is_err() {
+            println!("storage_credential_resp {:?}", storage_credential_resp);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
     }
 
     let response = CreateTenantResponse {
@@ -297,34 +336,33 @@ async fn apply_entity_schema_sync(
 
     let repo = ClickHouseRepository::new("clickhouse://...".to_string());
 
-    let cred = repo
-        .create_credential(unique_suffix.clone(), "my_password".to_string())
-        .await;
+    // let cred = repo
+    //     .create_credential(unique_suffix.clone(), "my_password".to_string())
+    //     .await;
 
-    println!("Unique_suffix {}", unique_suffix.clone());
+    // println!("Unique_suffix {}", unique_suffix.clone());
 
-    assert!(cred.is_ok());
-    let cred = cred.unwrap();
+    // assert!(cred.is_ok());
+    // let cred = cred.unwrap();
 
-    let scope = ScopeRepository::new(&pool);
-
-    if !scope
-        .has_tenant_storage_credential(req.tenant_id.clone())
-        .await
-    {
-        let storage_credential_resp = scope
-            .create_storage_credential(
-                req.tenant_id.clone(),
-                "clickhouse".to_string(),
-                cred.to_dsn(),
-                by_account_id.clone(),
-            )
-            .await;
-        if storage_credential_resp.is_err() {
-            println!("storage_credential_resp {:?}", storage_credential_resp);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    }
+    // let scope = ScopeRepository::new(&pool);
+    // if !scope
+    //     .has_tenant_storage_credential(req.tenant_id.clone())
+    //     .await
+    // {
+    //     let storage_credential_resp = scope
+    //         .create_storage_credential(
+    //             req.tenant_id.clone(),
+    //             "clickhouse".to_string(),
+    //             cred.to_dsn(),
+    //             by_account_id.clone(),
+    //         )
+    //         .await;
+    //     if storage_credential_resp.is_err() {
+    //         println!("storage_credential_resp {:?}", storage_credential_resp);
+    //         return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    //     }
+    // }
 
     let tenant_repo = ClickHouseRepository::choose_tenant(unique_suffix.clone());
 
@@ -381,7 +419,11 @@ async fn push_event(BufferRequestBody(body): BufferRequestBody) -> Json<PushEven
     for unit in event.units.iter() {
         for value in unit.value.iter() {
             let column = ChColumn {
-                name: if unit.name != "" { format!("{}_{}", unit.name, value.name) } else { value.name.clone() },
+                name: if unit.name != "" {
+                    format!("{}_{}", unit.name, value.name)
+                } else {
+                    value.name.clone()
+                },
                 value: value.value.clone(),
             };
             println!("ins: {}: {:?}", column.name.clone(), value.value.clone());
@@ -399,7 +441,7 @@ async fn push_event(BufferRequestBody(body): BufferRequestBody) -> Json<PushEven
         return Json(PushEventResponse {
             is_success: false,
             message_code: Some("event_name_is_not_given".to_string()),
-        })
+        });
     }
     let res = insert_smth(table_name.unwrap().to_string(), columns).await;
 
@@ -407,7 +449,7 @@ async fn push_event(BufferRequestBody(body): BufferRequestBody) -> Json<PushEven
         return Json(PushEventResponse {
             is_success: false,
             message_code: Some(format!("internal_error: {}", res.unwrap_err())),
-        })
+        });
     }
 
     Json(PushEventResponse {
@@ -448,14 +490,14 @@ async fn routes_app() -> Router<()> {
         .route("/signin", get(get_signin).post(post_signin))
         .route("/docs", get(get_docs))
         .route("/dashboard", get(get_dashboard))
-        .route("/api/push/v1/push-event", post(push_event))
-        .route("/api/manage/v1/create-tenant", post(create_tenant))
+        .route("/push-api/v0-unstable/push-event", post(push_event))
+        .route("/manage-api/v0-unstable/create-tenant", post(create_tenant))
         .route(
-            "/api/manage/v1/link-tenant-account",
+            "/manage-api/v0-unstable/link-tenant-account",
             post(link_tenant_account),
         )
         .route(
-            "/api/manage/v0-unstable/apply-entity-schema-sync",
+            "/manage-api/v0-unstable/apply-entity-schema-sync",
             post(apply_entity_schema_sync),
         )
         .with_state(pool);
@@ -527,7 +569,7 @@ pub mod test {
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", bearer))
-                    .uri("/api/manage/v1/create-tenant")
+                    .uri("/manage-api/v0-unstable/create-tenant")
                     .body(Body::from(tenant_request_str))
                     .unwrap(),
             )
@@ -562,7 +604,7 @@ pub mod test {
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", bearer))
-                    .uri("/api/manage/v1/link-tenant-account")
+                    .uri("/manage-api/v0-unstable/link-tenant-account")
                     .body(Body::from(tenant_request_str))
                     .unwrap(),
             )
@@ -615,7 +657,7 @@ pub mod test {
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", bearer))
-                    .uri("/api/manage/v1/create-tenant")
+                    .uri("/manage-api/v0-unstable/create-tenant")
                     .body(Body::from(tenant_request_str))
                     .unwrap(),
             )
@@ -674,7 +716,7 @@ pub mod test {
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", bearer))
-                    .uri("/api/manage/v1/link-tenant-account")
+                    .uri("/manage-api/v0-unstable/link-tenant-account")
                     .body(Body::from(tenant_request_str))
                     .unwrap(),
             )
@@ -711,7 +753,7 @@ pub mod test {
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", bearer_2))
-                    .uri("/api/manage/v1/link-tenant-account")
+                    .uri("/manage-api/v0-unstable/link-tenant-account")
                     .body(Body::from(tenant_request_str))
                     .unwrap(),
             )
@@ -720,50 +762,6 @@ pub mod test {
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
-
-    // #[rstest]
-    // #[tokio::test]
-    // async fn test_push_component_event(#[future] app: Router<()>) {
-    //     let push_request_str = r#"{
-    //         "event": {
-    //             "name": "main",
-    //             "units": [
-    //                 {
-    //                     "type": "span",
-    //                     "id": "xxxx",
-    //                     "start_time": 1234567890,
-    //                     "end_time": 1234567892
-    //                 },
-    //                 {
-    //                     "type": "base",
-    //                     "timestamp": 1234567892,
-    //                     "parent_span_id": "xxxx",
-    //                     "message": "test message"
-    //                 }
-    //             ]
-    //         }
-    //     }
-    //     "#;
-
-    //     let response = app
-    //         .await
-    //         .oneshot(
-    //             Request::builder()
-    //                 .method(http::Method::POST)
-    //                 .header("Content-Type", "application/json")
-    //                 .uri("/api/push/v1/push-event")
-    //                 .body(Body::from(push_request_str))
-    //                 .unwrap(),
-    //         )
-    //         .await
-    //         .unwrap();
-
-    //     assert_eq!(response.status(), StatusCode::OK);
-    //     let body = response.into_body().collect().await.unwrap().to_bytes();
-    //     let response_str = std::str::from_utf8(&body).unwrap();
-    //     let push_event_response: PushEventResponse = serde_json::from_str(&response_str).unwrap();
-    //     assert_eq!(push_event_response.is_success, true, "response {:?}", push_event_response);
-    // }
 
     #[rstest]
     #[tokio::test]
@@ -785,7 +783,7 @@ pub mod test {
                 Request::builder()
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
-                    .uri("/api/push/v1/push-event")
+                    .uri("/push-api/v0-unstable/push-event")
                     .body(Body::from(push_request_str))
                     .unwrap(),
             )
@@ -810,7 +808,7 @@ pub mod test {
                 Request::builder()
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
-                    .uri("/api/push/v1/push-event")
+                    .uri("/push-api/v0-unstable/push-event")
                     .body(Body::from(push_request_str))
                     .unwrap(),
             )
@@ -924,7 +922,7 @@ pub mod test {
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", bearer))
-                    .uri("/api/manage/v0-unstable/apply-entity-schema-sync")
+                    .uri("/manage-api/v0-unstable/apply-entity-schema-sync")
                     .body(Body::from(request_str.clone()))
                     .unwrap(),
             )
@@ -940,7 +938,7 @@ pub mod test {
                     .method(http::Method::POST)
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", bearer))
-                    .uri("/api/manage/v0-unstable/apply-entity-schema-sync")
+                    .uri("/manage-api/v0-unstable/apply-entity-schema-sync")
                     .body(Body::from(request_str.clone()))
                     .unwrap(),
             )

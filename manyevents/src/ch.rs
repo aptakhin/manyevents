@@ -1,10 +1,10 @@
+use clickhouse::error::Error;
 use clickhouse::sql::Identifier;
 use clickhouse::Client;
 use clickhouse::Row;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use clickhouse::error::Error;
 
 use crate::schema::{EventJsonSchema, JsonSchemaProperty, SerializationType};
 
