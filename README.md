@@ -4,9 +4,11 @@ Business and tech observability in the one product. Because this separation hurt
 
 # The shortest guide to run queries
 
+`jq` command in the end is optional, it's for more readable output.
+
 ```bash
 # https://manyevents.cloud
-curl "http://localhost:8000/manage-api/v0-unstable/signin" -d '{"email": "your_email@.com", "password": "<your_password>"}' -H "Content-Type: application/json"
+curl "https://manyevents.cloud/manage-api/v0-unstable/signin" -d '{"email": "your_email@.com", "password": "<your_password>"}' -H "Content-Type: application/json" | jq
 ```
 
 Got response:
@@ -14,14 +16,14 @@ Got response:
 ```json
 {
   "is_success": true,
-  "auth_token": "c5e323de6fa621aa1dcba6befcd7555ebcf37bf91ab8295caf464267baa604e1"
+  "auth_token": "9160b32b7df1e9e6fef247d39ca8fb7f5861805a4327806f5df791d9a070d59a"
 }
 ```
 
 Use `auth_token` in `Authorization: Bearer <<TOKEN>>` within all next queries. Let's create own company-tenant.
 
 ```bash
-curl "http://localhost:8000/manage-api/v0-unstable/create-tenant" -d '{"title": "my-company"}' -H "Content-Type: application/json" -H "Authorization: Bearer c5e323de6fa621aa1dcba6befcd7555ebcf37bf91ab8295caf464267baa604e1" | jq
+curl "https://manyevents.cloud/manage-api/v0-unstable/create-tenant" -d '{"title": "my-company"}' -H "Content-Type: application/json" -H "Authorization: Bearer 9160b32b7df1e9e6fef247d39ca8fb7f5861805a4327806f5df791d9a070d59a" | jq
 ```
 
 Got response:
@@ -29,20 +31,20 @@ Got response:
 ```json
 {
   "is_success": true,
-  "id": "2b0d6db7-ff34-4f65-9385-3d2d463d3013",
-  "clickhouse_read_dsn": "clickhouse://user_2b0d6db7ff344f6593853d2d463d3013:my_password@localhost/db_2b0d6db7ff344f6593853d2d463d3013",
+  "id": "6d0edd61-9a68-48b4-9b18-c3ffbd793e4b",
+  "clickhouse_read_dsn": "clickhouse://user_6d0edd619a6848b49b18c3ffbd793e4b:my_password@localhost/db_6d0edd619a6848b49b18c3ffbd793e4b",
   "clickhouse_admin_dsn": "",
-  "push_token": "c1f7c0f9e7ca95daf5979576a5dc3b757428a3395548bcd39f0148593907dadd"
+  "push_token": "2c2f5367b19b6624500e6f22a123c06a14037d00014850a1e1cb2dc9fca2f913"
 }
 ```
 
 `id` - Created tenant id. We will use it in the following query.
 `clickhouse_read_dsn` - could be used to access database with read-only user.
 
-Let's declare a schema for wide-event named `main`.
+Let's declare a schema for wide-event named `main`. In manage api we still use our first bearer token.
 
 ```bash
-curl "http://localhost:8000/manage-api/v0-unstable/apply-event-schema-sync" \
+curl "https://manyevents.cloud/manage-api/v0-unstable/apply-event-schema-sync" \
 -d '{"tenant_id": "2b0d6db7-ff34-4f65-9385-3d2d463d3013", "name": "main", "schema": {"type": "object",
     "properties": {
         "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
@@ -55,7 +57,7 @@ curl "http://localhost:8000/manage-api/v0-unstable/apply-event-schema-sync" \
     "x-manyevents-ch-order-by": "base_timestamp",
     "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
     "x-manyevents-ch-partition-by": "base_timestamp"} }' \
-    -H "Content-Type: application/json" -H "Authorization: Bearer c5e323de6fa621aa1dcba6befcd7555ebcf37bf91ab8295caf464267baa604e1"
+    -H "Content-Type: application/json" -H "Authorization: Bearer 9160b32b7df1e9e6fef247d39ca8fb7f5861805a4327806f5df791d9a070d59a"
 ```
 
 Got response:
@@ -67,14 +69,14 @@ OK
 We will use `push_token` to send new data.
 
 ```bash
-curl "http://localhost:8000/push-api/v0-unstable/push-event" -d '{"x-manyevents-name": "main",
+curl "https://manyevents.cloud/push-api/v0-unstable/push-event" -d '{"x-manyevents-name": "main",
     "span_id": "xxxx",
     "span_start_time": 1234567890,
     "span_end_time": 1234567892,
     "base_timestamp": 1234567892,
     "base_parent_span_id": "xxxx",
     "base_message": "test message"}' \
-    -H "Content-Type: application/json" -H "Authorization: Bearer c1f7c0f9e7ca95daf5979576a5dc3b757428a3395548bcd39f0148593907dadd"
+    -H "Content-Type: application/json" -H "Authorization: Bearer 2c2f5367b19b6624500e6f22a123c06a14037d00014850a1e1cb2dc9fca2f913"
 ```
 
 Response:
