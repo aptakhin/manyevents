@@ -5,10 +5,7 @@ edition = "2021"
 
 [dependencies]
 serde_derive = "1.0"
-clickhouse = "0.13.1"
 tokio = { version = "1", features = ["full"] }
-
-rocket = { version = "0.5", features = ["json", "uuid"] }
 
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
@@ -35,6 +32,7 @@ minijinja = { version = "2.5.0", features = ["loader"] }
 axum-extra = { version = "0.9.6", features = ["form", "cookie", "typed-header"] }
 jsonschema = { version = "0.27.1", default-features = false }
 
-[dev-dependencies]
 clickhouse = { version = "0.13.1", features = ["test-util"] }
+
+[dev-dependencies]
 

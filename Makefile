@@ -11,10 +11,10 @@ testw::
 	(cd manyevents && RUST_LOG=debug RUST_BACKTRACE=1 cargo watch --clear -- cargo test -- --show-output)
 
 build::
-	(cd manyevents && cargo build --verbose)
+	(cd manyevents && cargo build --locked)
 
 build-release::
-	(cd manyevents && cargo build --release --verbose)
+	(cd manyevents && cargo build --release --locked)
 
 fmt::
 	(cd manyevents && cargo fmt --all)
