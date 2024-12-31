@@ -1,0 +1,35 @@
+name: Release
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - '*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Stable rust toolchain
+      run: rustup update stable
+
+    - name: Build release
+      run: make build-release
+
+    - name: Upload binaries to release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: manyevents/target/release/manyevents
+        asset_name: manyevents
+        tag: ${{ github.ref }}
+        overwrite: true
+        body: "Release text"
