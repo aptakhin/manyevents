@@ -60,29 +60,29 @@ sudo apt-get install unzip -y
 
 ## Release
 
-CI/CD minimal :D
+Setup the most difficult password for `postgres` user.
 
 ```bash
-wget https://github.com/aptakhin/manyevents/archive/refs/heads/main.zip
-unzip main.zip
-mv manyevents-main/manyevents/static/ .
-rm manyevents-main
+sudo -u postgres psql -c "ALTER USER postgres PASSWORD '...';"
 ```
 
+Download new release:
+
 ```bash
-wget https://github.com/aptakhin/manyevents/releases/download/v0.0/manyevents
+RELEASE=manyevents-v0.0-linux-amd64
+wget https://github.com/aptakhin/manyevents/releases/download/v0.0/$RELEASE.tar.gz
+tar -xf $RELEASE.tar.gz
+cd $RELEASE
+
 chmod +x manyevents
-whet https://raw.githubusercontent.com/aptakhin/manyevents/refs/heads/main/.env.example
+
 mv .env.example .env
 # edit .env, change to postgres/postgres/postgres
 set -a; source .env; set +a
 
-sudo -u postgres psql -c "ALTER USER postgres PASSWORD '...';"
-
 # Run migrations
 ./manyevents migrate
-
-# Means ok:
+# This output means ok:
 # > Migration result ()
 
 # Debug run
