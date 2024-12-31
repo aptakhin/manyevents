@@ -22,7 +22,7 @@ jobs:
       run: rustup update stable
 
     - name: Make release
-      run: bash scripts/make-release.sh manyevents-${{ github.ref_name }}-linux-amd64.tar.gz
+      run: bash scripts/make-release.sh manyevents-${{ github.ref_name }}-linux-amd64.tar.gz && pwd && ls -la
 
     - name: Upload binaries to release
       uses: svenstaro/upload-release-action@v2
