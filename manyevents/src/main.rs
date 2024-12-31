@@ -40,7 +40,7 @@ use crate::auth::{
     AccountActionOnTenant, AccountRepository, ApiAuth, ApiAuthRepository, Authentificated,
     PushApiAuth, PushApiAuthRepository,
 };
-use crate::ch::{insert_smth, make_migration_plan, ChColumn, ClickHouseRepository};
+use crate::ch::{make_migration_plan, ChColumn, ClickHouseRepository};
 use crate::schema::{read_event_data, EventJsonSchema, JsonSchemaProperty, SerializationType};
 use crate::scope::ScopeRepository;
 use crate::settings::Settings;

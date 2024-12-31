@@ -15,45 +15,6 @@ pub struct ChColumn {
     pub value: SerializationType,
 }
 
-pub async fn insert_smth(table_name: String, rows: Vec<ChColumn>) -> Result<(), Error> {
-    let client = Client::default()
-        .with_url("http://localhost:8123")
-        .with_database("manyevents")
-        .with_user("username")
-        .with_password("password")
-        .with_option("async_insert", "0")
-        .with_option("wait_for_async_insert", "1");
-
-    let column_names_str = rows
-        .iter()
-        .map(|x| x.name.clone())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let placeholders_str = rows.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-
-    let query = format!(
-        "INSERT INTO ? ({}) VALUES ({})",
-        column_names_str, placeholders_str
-    );
-    println!("sss: {}/{:?}", table_name, query);
-    let mut y = client.query(&query).bind(Identifier(&table_name));
-
-    for row in rows.iter() {
-        println!("pass: {}: {:?}", row.name.clone(), row.value.clone());
-
-        match &row.value {
-            SerializationType::Int(val) => y = y.bind(val),
-            SerializationType::Float(val) => y = y.bind(val),
-            SerializationType::Str(val) => y = y.bind(val),
-        }
-    }
-
-    let yy = y.execute().await;
-
-    println!("I: {:?}", yy);
-    yy
-}
-
 pub struct ClickHouseTenantCredential {
     pub role: String,
     pub db_host: String,
@@ -77,11 +38,12 @@ pub struct ClickHouseRepository {
 
 impl ClickHouseRepository {
     pub fn new(dsn: String) -> ClickHouseRepository {
+        let settings = Settings::read_settings();
         let client = Client::default()
-            .with_url("http://localhost:8123")
-            .with_database("manyevents")
-            .with_user("username")
-            .with_password("password")
+            .with_url(settings.get_local_http_clickhouse_url())
+            .with_database(settings.get_clickhouse_db())
+            .with_user(settings.get_clickhouse_user())
+            .with_password(settings.get_clickhouse_password())
             .with_option("async_insert", "1")
             .with_option("wait_for_async_insert", "0");
 
@@ -90,11 +52,12 @@ impl ClickHouseRepository {
 
     pub fn choose_tenant(unique_suffix: String) -> ClickHouseRepository {
         let db_name = format!("db_{}", unique_suffix);
+        let settings = Settings::read_settings();
         let client = Client::default()
-            .with_url("http://localhost:8123")
+            .with_url(settings.get_local_http_clickhouse_url())
             .with_database(db_name.as_str())
-            .with_user("username")
-            .with_password("password")
+            .with_user(settings.get_clickhouse_user())
+            .with_password(settings.get_clickhouse_password())
             .with_option("async_insert", "1")
             .with_option("wait_for_async_insert", "0");
 
@@ -311,8 +274,9 @@ pub struct ClickHouseTenantRepository {
 
 impl ClickHouseTenantRepository {
     pub fn new(tenant: ClickHouseTenantCredential) -> ClickHouseTenantRepository {
+        let settings = Settings::read_settings();
         let client = Client::default()
-            .with_url("http://localhost:8123")
+            .with_url(settings.get_local_http_clickhouse_url())
             .with_user(tenant.db_user)
             .with_password(tenant.db_password)
             .with_database(tenant.db_name)
