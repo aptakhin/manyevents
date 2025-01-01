@@ -66,8 +66,6 @@ impl Settings {
             env::var("CLICKHOUSE_DB").unwrap()
         )
     }
-
-
 }
 
 #[cfg(test)]

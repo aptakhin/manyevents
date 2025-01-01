@@ -1,3 +1,5 @@
+#![warn(unused_extern_crates)]
+
 use axum::{
     async_trait,
     body::Bytes,
@@ -277,7 +279,7 @@ async fn create_tenant(
     //     return Err(StatusCode::UNAUTHORIZED);
     // }
 
-    let unique_suffix = format!("{}", tenant_id.clone().as_simple());
+    let unique_suffix = format!("db_{}", tenant_id.clone().as_simple());
 
     let repo = ClickHouseRepository::new("clickhouse://...".to_string());
 
@@ -393,7 +395,7 @@ async fn apply_event_schema_sync(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let unique_suffix = format!("{}", req.tenant_id.clone().as_simple());
+    let unique_suffix = format!("db_{}", req.tenant_id.clone().as_simple());
 
     let tenant_repo = ClickHouseRepository::choose_tenant(unique_suffix.clone());
 
@@ -525,7 +527,7 @@ async fn push_event(
     let res = res.unwrap();
     let tenant_id = res.0;
 
-    let unique_suffix = format!("{}", tenant_id.clone().as_simple());
+    let unique_suffix = format!("db_{}", tenant_id.clone().as_simple());
     println!("Use tenantdb {unique_suffix} for tenant_id={tenant_id}");
     let tenant_repo = ClickHouseRepository::choose_tenant(unique_suffix.clone());
 
@@ -980,6 +982,56 @@ pub mod test {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_create_schema(
+        #[future] app: Router<()>,
+        #[future] pool: DbPool,
+        #[future] tenant_and_push_creds: TenantPushCreds,
+    ) {
+        use clickhouse::Row;
+        let app = app.await;
+        let tenant_and_push_creds = tenant_and_push_creds.await;
+        let req = ApplyEventSchemaRequest {
+            tenant_id: tenant_and_push_creds.tenant_id,
+            name: "main".to_string(),
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
+                    "base_parent_span_id": { "type": "string", "x-manyevents-ch-type": "String" },
+                    "base_message": { "type": "string", "x-manyevents-ch-type": "String" },
+                    "span_start_time": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
+                    "span_end_time": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
+                    "span_id": { "type": "string", "x-manyevents-ch-type": "String" },
+                },
+                "x-manyevents-ch-order-by": "base_timestamp",
+                "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
+                "x-manyevents-ch-partition-by": "base_timestamp",
+            }),
+        };
+        let request_str = serde_json::to_string(&req).unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .header("Content-Type", "application/json")
+                    .header(
+                        "Authorization",
+                        format!("Bearer {}", tenant_and_push_creds.api_token),
+                    )
+                    .uri("/manage-api/v0-unstable/apply-event-schema-sync")
+                    .body(Body::from(request_str.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[rstest]

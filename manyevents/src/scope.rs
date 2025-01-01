@@ -109,7 +109,7 @@ impl<'a> ScopeRepository<'a> {
         .await;
         match res {
             Ok(Some((tenant_id, dsn))) => Ok((tenant_id, dsn)),
-            Ok(None) => Err("No entry".to_string()),
+            Ok(None) => Err("No tenant entry".to_string()),
             Err(e) => Err(format!(
                 "SQL error in get_tenant_and_storage_credential_by_environment: {}",
                 e

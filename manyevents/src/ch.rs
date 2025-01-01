@@ -50,8 +50,7 @@ impl ClickHouseRepository {
         ClickHouseRepository { client }
     }
 
-    pub fn choose_tenant(unique_suffix: String) -> ClickHouseRepository {
-        let db_name = format!("db_{}", unique_suffix);
+    pub fn choose_tenant(db_name: String) -> ClickHouseRepository {
         let settings = Settings::read_settings();
         let client = Client::default()
             .with_url(settings.get_local_http_clickhouse_url())
@@ -62,6 +61,10 @@ impl ClickHouseRepository {
             .with_option("wait_for_async_insert", "0");
 
         ClickHouseRepository { client }
+    }
+
+    pub fn get_client(&self) -> &Client {
+        &self.client
     }
 
     pub async fn insert(&self, table_name: String, rows: Vec<ChColumn>) -> Result<(), Error> {
@@ -97,10 +100,10 @@ impl ClickHouseRepository {
 
     pub async fn create_credential(
         &self,
-        unique_suffix: String,
+        db_name: String,
         db_password: String,
     ) -> Result<ClickHouseTenantCredential, ()> {
-        let db_name = format!("db_{}", unique_suffix);
+        let unique_suffix = db_name.strip_prefix("db_").unwrap_or(&db_name);
 
         let res_2 = self
             .client
@@ -108,27 +111,27 @@ impl ClickHouseRepository {
             .bind(Identifier(db_name.as_str()))
             .execute()
             .await;
-        println!("CH {:?}", res_2);
+        println!("CREATE DATABASE {} {:?}", db_name.as_str(), res_2);
 
-        let role = format!("admin_role_{}", unique_suffix);
+        let admin_role = format!("admin_role_{}", unique_suffix);
         let db_user = format!("user_{}", unique_suffix);
 
         let res_3 = self
             .client
             .query("CREATE ROLE ?")
-            .bind(Identifier(role.as_str()))
+            .bind(Identifier(admin_role.as_str()))
             .execute()
             .await;
-        println!("CH {:?}", res_3);
+        println!("CREATE ROLE {} {:?}", admin_role.as_str(), res_3);
 
         let res_4 = self
             .client
-            .query("GRANT SELECT ON ?.* TO ?;")
+            .query("GRANT SELECT, SHOW, dictGet ON ?.* TO ?;")
             .bind(Identifier(db_name.as_str()))
-            .bind(Identifier(role.as_str()))
+            .bind(Identifier(admin_role.as_str()))
             .execute()
             .await;
-        println!("CH {:?}", res_4);
+        println!("GRANT SELECT {}->{} {:?}", admin_role.as_str(), db_name.as_str(), res_4);
 
         let res = self
             .client
@@ -138,11 +141,20 @@ impl ClickHouseRepository {
             .bind(Identifier(db_name.as_str()))
             .execute()
             .await;
-        println!("CH {:?}", res);
+        println!("CREATE USER {} {:?}", db_user.as_str(), res);
+
+        let res = self
+            .client
+            .query("GRANT ? TO ?")
+            .bind(Identifier(admin_role.as_str()))
+            .bind(Identifier(db_user.as_str()))
+            .execute()
+            .await;
+        println!("GRANT ROLE {} TO {} {:?}", admin_role.as_str(), db_user.as_str(), res);
 
         let db_host = Settings::read_settings().clickhouse_external_host;
         Ok(ClickHouseTenantCredential {
-            role,
+            role: admin_role,
             db_host,
             db_name,
             db_user,
@@ -269,7 +281,7 @@ impl ClickHouseRepository {
 }
 
 pub struct ClickHouseTenantRepository {
-    pub client: Client,
+    client: Client,
 }
 
 impl ClickHouseTenantRepository {
@@ -284,6 +296,10 @@ impl ClickHouseTenantRepository {
             .with_option("wait_for_async_insert", "0");
 
         ClickHouseTenantRepository { client }
+    }
+
+    pub fn get_client(&self) -> &Client {
+        &self.client
     }
 }
 
@@ -368,7 +384,7 @@ pub mod test {
     }
 
     #[fixture]
-    pub fn unique_table_name() -> String {
+    pub fn unique_name() -> String {
         use std::time::{SystemTime, UNIX_EPOCH};
         let start = SystemTime::now();
         let since_the_epoch = start
@@ -377,23 +393,40 @@ pub mod test {
         let millis = since_the_epoch.as_millis();
         let salt: [u8; 16] = rand::thread_rng().gen();
         let salt_hex = hex::encode(salt);
-        format!("table_{}{}", millis, salt_hex)
+        format!("{}_{}", millis, salt_hex)
+    }
+
+    #[fixture]
+    pub fn unique_db_name(unique_name: String) -> String {
+        format!("db_{}", unique_name)
+    }
+
+    #[fixture]
+    pub fn unique_table_name(unique_name: String) -> String {
+        format!("table_{}", unique_name)
     }
 
     #[rstest]
     #[tokio::test]
-    async fn test_create_credential(#[future] repo: ClickHouseRepository) {
+    async fn test_create_credential(unique_db_name: String, #[future] repo: ClickHouseRepository) {
         let repo = repo.await;
 
         let cred = repo
-            .create_credential("abc2".to_string(), "my_password".to_string())
+            .create_credential(unique_db_name, "my_password".to_string())
             .await;
 
         assert!(cred.is_ok());
         let cred = cred.unwrap();
-
         let tenant_repo = ClickHouseTenantRepository::new(cred);
-        let res = tenant_repo.client.query("select 'hleoo'").execute().await;
+        #[derive(Row, Deserialize, Debug)]
+        struct NameRow {
+            name: String,
+        }
+        let res = tenant_repo
+            .get_client()
+            .query("SHOW DATABASES")
+            .fetch_all::<NameRow>()
+            .await;
         println!("CY {:?}", res);
         assert!(res.is_ok());
     }
@@ -429,6 +462,99 @@ pub mod test {
             "Migration failed with error: {:?}",
             migration.unwrap_err()
         );
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_access(
+        unique_db_name: String,
+        unique_table_name: String,
+        #[future] repo: ClickHouseRepository,
+    ) {
+        let repo = repo.await;
+        let credential = repo
+            .create_credential(unique_db_name.clone(), "my_password".to_string())
+            .await;
+        assert!(credential.is_ok());
+        let credential = credential.unwrap();
+        let tenant_repo = ClickHouseRepository::choose_tenant(credential.db_name.clone());
+        let res = tenant_repo
+            .get_client()
+            .query("CREATE TABLE ? (name String) ORDER BY name")
+            .bind(Identifier(unique_table_name.as_str()))
+            .execute()
+            .await;
+        println!("Created table {}/{}", unique_db_name.as_str(), unique_table_name.as_str());
+        assert!(res.is_ok(), "Create table error: {:?}", res);
+
+        let tenant_repo = ClickHouseTenantRepository::new(credential);
+        #[derive(Row, Deserialize, Debug)]
+        struct NameRow {
+            name: String,
+        }
+        let res = tenant_repo
+            .get_client()
+            .query("SHOW TABLES")
+            .fetch_all::<NameRow>()
+            .await;
+        assert!(res.is_ok(), "Show tables error: {:?}", res);
+        let res = res.unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].name, unique_table_name);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_create_credential_and_migrate(
+        unique_db_name: String,
+        unique_table_name: String,
+        #[future] repo: ClickHouseRepository,
+    ) {
+        let repo = repo.await;
+        let credential = repo
+            .create_credential(unique_db_name.clone(), "my_password".to_string())
+            .await;
+        assert!(credential.is_ok());
+        let credential = credential.unwrap();
+        let migration_plan = ChTableMigration {
+            order_by: ChColumnMigrationStatus::Added("name".to_string()),
+            partition_by: ChColumnMigrationStatus::Added("name".to_string()),
+            columns: vec![
+                ChColumnMigration {
+                    name: "name".to_string(),
+                    type_: ChColumnMigrationStatus::Added("String".to_string()),
+                },
+                ChColumnMigration {
+                    name: "age".to_string(),
+                    type_: ChColumnMigrationStatus::Added("Int64".to_string()),
+                },
+            ],
+        };
+        let tenant_repo = ClickHouseRepository::choose_tenant(unique_db_name);
+
+        let migration = tenant_repo
+            .execute_init_migration(unique_table_name.clone(), migration_plan, false)
+            .await;
+
+        assert!(
+            migration.is_ok(),
+            "Migration failed with error: {:?}",
+            migration.unwrap_err()
+        );
+        let credential_tenant_repo = ClickHouseTenantRepository::new(credential);
+        #[derive(Row, Deserialize, Debug)]
+        struct NameRow {
+            name: String,
+        }
+        let res = credential_tenant_repo
+            .get_client()
+            .query("SHOW TABLES")
+            .fetch_all::<NameRow>()
+            .await;
+        assert!(res.is_ok(), "Show tables error: {:?}", res);
+        let res = res.unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].name, unique_table_name);
     }
 
     #[rstest]
