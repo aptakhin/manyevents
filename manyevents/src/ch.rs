@@ -5,6 +5,8 @@ use clickhouse::Row;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use logos::Logos;
+use logos::Lexer;
 
 use crate::schema::{EventJsonSchema, JsonSchemaProperty, SerializationType};
 use crate::settings::Settings;
@@ -206,7 +208,7 @@ impl ClickHouseRepository {
         let or_replace_str = if or_replace { "OR REPLACE " } else { "" };
         let columns_str = args
             .iter()
-            .map(|(name, type_)| format!("{} {}", name, type_))
+            .map(|(_, type_)| format!("? {}", type_))
             .collect::<Vec<_>>()
             .join(", ");
         let raw_query = format!(
@@ -225,6 +227,10 @@ impl ClickHouseRepository {
             .client
             .query(raw_query.as_str())
             .bind(Identifier(table_name.as_str()));
+
+        for (name, type_) in args {
+            query = query.bind(Identifier(&name));//.bind(Identifier(&type_));
+        }
 
         let exec = query.execute().await;
 
@@ -371,6 +377,86 @@ pub fn make_migration_plan(from: EventJsonSchema, to: EventJsonSchema) -> ChTabl
         order_by,
         partition_by,
     }
+}
+
+#[derive(Logos, Debug, PartialEq)]
+#[logos(skip r"[ \t\n\f]+")]
+enum Token {
+    #[token("(")]
+    LParen,
+
+    #[token(")")]
+    RParen,
+
+    #[token(",")]
+    Comma,
+
+    #[regex(r"[a-zA-Z][a-zA-Z0-9_]+", |lex| lex.slice().to_string())]
+    Ident(String),
+
+    #[regex("('[a-zA-Z0-9/_]*'|\"[a-zA-Z0-9/_]*\")", |lex| lex.slice().to_string())]
+    String_(String),
+
+    #[regex(r"\d+")]
+    Number,
+}
+
+#[derive(Debug, PartialEq)]
+enum TypeParseState {
+    WaitForIdent,
+    ReadIdent,
+    InsideWaitForParam,
+    InsideReadParam,
+    Finish,
+}
+
+pub fn validate_type(input: &str) -> bool {
+    let mut lex = Token::lexer(input);
+    println!("Start parse CH type: {}", input);
+
+    let mut state = TypeParseState::WaitForIdent;
+
+    while let Some(token) = lex.next() {
+        println!(" state: {:?}, token: {:?}", state, token);
+        if token.is_err() {
+            return false;
+        }
+        let token = token.unwrap();
+        match state {
+            TypeParseState::WaitForIdent => {
+                match token {
+                    Token::Ident(ident) => { state = TypeParseState::ReadIdent; }
+                    _ => { return false; }
+                }
+            },
+            TypeParseState::ReadIdent => {
+                match token {
+                    Token::LParen => { state = TypeParseState::InsideWaitForParam; }
+                    _ => { return false; }
+                }
+            },
+            TypeParseState::InsideWaitForParam => {
+                match token {
+                    Token::Ident(_ident) => { state = TypeParseState::InsideReadParam; }
+                    Token::Number => { state = TypeParseState::InsideReadParam; }
+                    Token::String_(_string) => { state = TypeParseState::InsideReadParam; }
+                    Token::RParen => { state = TypeParseState::Finish; }
+                    _ => { return false; }
+                }
+            },
+            TypeParseState::InsideReadParam => {
+                match token {
+                    Token::Comma => { state = TypeParseState::InsideWaitForParam; }
+                    Token::RParen => { state = TypeParseState::Finish; }
+                    _ => { return false; }
+                }
+            },
+            TypeParseState::Finish => {
+                return false
+            }
+        }
+    }
+    state == TypeParseState::ReadIdent || state == TypeParseState::Finish
 }
 
 #[cfg(test)]
@@ -657,5 +743,63 @@ pub mod test {
         let migration_plan = make_migration_plan(old, new);
 
         assert_eq!(migration_plan.columns.len(), 1);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_type_binding(
+        unique_table_name: String,
+        #[future] repo: ClickHouseRepository,
+    ) {
+        // let nm = "name String) ORDER BY name; DROP ALL TABLES; SELECT * FROM system.tables ";
+        let nm = "name";
+        let tp = "String";
+        let nm2= "age";
+        let tp2 = "LOWCardinality(STRING)";
+        let repo = repo.await;
+        let res = repo
+            .get_client()
+            .query("CREATE TABLE ? (? ?, ? LowCardinality(String)) ORDER BY name")
+            .bind(Identifier(unique_table_name.as_str()))
+            .bind(Identifier(&nm))
+            .bind(Identifier(&tp))
+            .bind(Identifier(&nm2))
+            // .bind(&tp2)
+            .execute()
+            .await;
+        println!("Created table {}", unique_table_name.as_str());
+        assert!(res.is_ok(), "Create table error: {:?}", res);
+    }
+
+    #[rstest]
+    fn test_type_lexer() {
+        let mut lex = Token::lexer("String");
+
+        assert_eq!(lex.next(), Some(Ok(Token::Ident("String".to_string()))));
+        assert_eq!(lex.next(), None);
+    }
+
+    #[rstest]
+    fn test_type_lexer_compound() {
+        let mut lex = Token::lexer("LowCardinality(String)");
+
+        assert_eq!(lex.next(), Some(Ok(Token::Ident("LowCardinality".to_string()))));
+        assert_eq!(lex.next(), Some(Ok(Token::LParen)));
+        assert_eq!(lex.next(), Some(Ok(Token::Ident("String".to_string()))));
+        assert_eq!(lex.next(), Some(Ok(Token::RParen)));
+        assert_eq!(lex.next(), None);
+    }
+
+    #[rstest]
+    fn test_type_validation() {
+        assert!(validate_type("String"));
+        assert!(validate_type("LowCardinality(String)"));
+        assert!(!validate_type("1"));
+        assert!(!validate_type("1 + 2"));
+        assert!(!validate_type("LowCardinality(String))"));
+        assert!(validate_type("DateTime64(3, 'Asia/Istanbul')"));
+        assert!(validate_type("DateTime64(3, \"Asia/Istanbul\")"));
+        assert!(!validate_type("DateTime64(3, \"Asia/Istanbul')")); // different quotes
+        assert!(validate_type("tuple(String, Int64)"));
     }
 }
