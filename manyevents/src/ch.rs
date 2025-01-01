@@ -50,11 +50,11 @@ impl ClickHouseRepository {
         ClickHouseRepository { client }
     }
 
-    pub fn choose_tenant(db_name: String) -> ClickHouseRepository {
+    pub fn choose_tenant(db_name: &str) -> ClickHouseRepository {
         let settings = Settings::read_settings();
         let client = Client::default()
             .with_url(settings.get_local_http_clickhouse_url())
-            .with_database(db_name.as_str())
+            .with_database(db_name)
             .with_user(settings.get_clickhouse_user())
             .with_password(settings.get_clickhouse_password())
             .with_option("async_insert", "1")
@@ -477,7 +477,7 @@ pub mod test {
             .await;
         assert!(credential.is_ok());
         let credential = credential.unwrap();
-        let tenant_repo = ClickHouseRepository::choose_tenant(credential.db_name.clone());
+        let tenant_repo = ClickHouseRepository::choose_tenant(&credential.db_name);
         let res = tenant_repo
             .get_client()
             .query("CREATE TABLE ? (name String) ORDER BY name")
@@ -530,7 +530,7 @@ pub mod test {
                 },
             ],
         };
-        let tenant_repo = ClickHouseRepository::choose_tenant(unique_db_name);
+        let tenant_repo = ClickHouseRepository::choose_tenant(&unique_db_name);
 
         let migration = tenant_repo
             .execute_init_migration(unique_table_name.clone(), migration_plan, false)

@@ -397,7 +397,7 @@ async fn apply_event_schema_sync(
 
     let unique_suffix = format!("db_{}", req.tenant_id.clone().as_simple());
 
-    let tenant_repo = ClickHouseRepository::choose_tenant(unique_suffix.clone());
+    let tenant_repo = ClickHouseRepository::choose_tenant(&unique_suffix);
 
     let new: Result<EventJsonSchema, _> = serde_json::from_value(req.schema);
     if new.is_err() {
@@ -529,7 +529,7 @@ async fn push_event(
 
     let unique_suffix = format!("db_{}", tenant_id.clone().as_simple());
     println!("Use tenantdb {unique_suffix} for tenant_id={tenant_id}");
-    let tenant_repo = ClickHouseRepository::choose_tenant(unique_suffix.clone());
+    let tenant_repo = ClickHouseRepository::choose_tenant(&unique_suffix);
 
     let event = result.unwrap();
 
