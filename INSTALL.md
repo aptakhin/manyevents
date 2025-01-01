@@ -46,7 +46,7 @@ sudo service nginx start
 ```
 
 ```bash
-rsync nginx/nginx.comf. HOST:/etc/nginx/nginx.conf
+rsync nginx/nginx.conf HOST:/etc/nginx/nginx.conf
 ```
 
 ```bash
@@ -56,6 +56,21 @@ sudo certbot --nginx -d manyevents.cloud -d www.manyevents.cloud
 
 ```bash
 sudo apt-get install unzip -y
+```
+
+## Firewall
+
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+
+sudo ufw allow OpenSSH
+sudo ufw allow http
+sudo ufw allow https
+
+sudo ufw enable
+
+sudo ufw status numbered
 ```
 
 ## Release
@@ -73,8 +88,6 @@ RELEASE=manyevents-v0.0-linux-amd64
 wget https://github.com/aptakhin/manyevents/releases/download/v0.0/$RELEASE.tar.gz
 tar -xf $RELEASE.tar.gz
 cd $RELEASE
-
-chmod +x manyevents
 
 mv .env.example .env
 # edit .env, change to postgres/postgres/postgres

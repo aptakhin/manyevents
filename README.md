@@ -16,14 +16,14 @@ Got response:
 ```json
 {
   "is_success": true,
-  "auth_token": "9160b32b7df1e9e6fef247d39ca8fb7f5861805a4327806f5df791d9a070d59a"
+  "auth_token": "6c5718011b8b7da432457b664b5678095ffd132bafca8e9a26a75d42d2a82e0a"
 }
 ```
 
-Use `auth_token` in `Authorization: Bearer <<TOKEN>>` within all next queries. Let's create own company-tenant.
+Use `auth_token` in `Authorization: Bearer <<TOKEN>>` within next queries, except `push-event` endpoint, which requires dedicated `push_token` we will receive now. Let's create own company-tenant.
 
 ```bash
-curl "https://manyevents.cloud/manage-api/v0-unstable/create-tenant" -d '{"title": "my-company"}' -H "Content-Type: application/json" -H "Authorization: Bearer 9160b32b7df1e9e6fef247d39ca8fb7f5861805a4327806f5df791d9a070d59a" | jq
+curl "https://manyevents.cloud/manage-api/v0-unstable/create-tenant" -d '{"title": "my-company"}' -H "Content-Type: application/json" -H "Authorization: Bearer 6c5718011b8b7da432457b664b5678095ffd132bafca8e9a26a75d42d2a82e0a" | jq
 ```
 
 Got response:
@@ -45,7 +45,7 @@ Let's declare a schema for wide-event named `main`. In manage api we still use o
 
 ```bash
 curl "https://manyevents.cloud/manage-api/v0-unstable/apply-event-schema-sync" \
--d '{"tenant_id": "2b0d6db7-ff34-4f65-9385-3d2d463d3013", "name": "main", "schema": {"type": "object",
+-d '{"tenant_id": "6d0edd61-9a68-48b4-9b18-c3ffbd793e4b", "name": "main", "schema": {"type": "object",
     "properties": {
         "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
         "base_parent_span_id": { "type": "string", "x-manyevents-ch-type": "String" },
@@ -57,7 +57,7 @@ curl "https://manyevents.cloud/manage-api/v0-unstable/apply-event-schema-sync" \
     "x-manyevents-ch-order-by": "base_timestamp",
     "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
     "x-manyevents-ch-partition-by": "base_timestamp"} }' \
-    -H "Content-Type: application/json" -H "Authorization: Bearer 9160b32b7df1e9e6fef247d39ca8fb7f5861805a4327806f5df791d9a070d59a"
+    -H "Content-Type: application/json" -H "Authorization: Bearer 6c5718011b8b7da432457b664b5678095ffd132bafca8e9a26a75d42d2a82e0a"
 ```
 
 Got response:
