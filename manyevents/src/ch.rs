@@ -6,7 +6,6 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use logos::Logos;
-use logos::Lexer;
 
 use crate::schema::{EventJsonSchema, JsonSchemaProperty, SerializationType};
 use crate::settings::Settings;
@@ -45,7 +44,7 @@ pub struct ClickHouseRepository {
 }
 
 impl ClickHouseRepository {
-    pub fn new(dsn: String) -> ClickHouseRepository {
+    pub fn from_settings() -> ClickHouseRepository {
         let settings = Settings::read_settings();
         let client = Client::default()
             .with_url(settings.get_local_http_clickhouse_url())
@@ -237,8 +236,8 @@ impl ClickHouseRepository {
             .query(raw_query.as_str())
             .bind(Identifier(table_name.as_str()));
 
-        for (name, type_) in args {
-            query = query.bind(Identifier(&name));//.bind(Identifier(&type_));
+        for (name, _type_) in args {
+            query = query.bind(Identifier(&name));
         }
 
         let exec = query.execute().await;
@@ -271,7 +270,7 @@ impl ClickHouseRepository {
             }
         }
 
-        let order_by: Result<(), ()> = match migration_plan.order_by {
+        let _order_by: Result<(), ()> = match migration_plan.order_by {
             ChColumnMigrationStatus::NoChange => Ok(()),
             _ => return Err(MigrationError::QueryError("[Internal] Only NoChange supported for order_by!".to_string())),
         };
@@ -285,7 +284,7 @@ impl ClickHouseRepository {
 
         for arg in &args {
             let raw_query = format!("ALTER TABLE ? ADD COLUMN ? {}", arg.1.as_str());
-            let mut query = self
+            let query = self
                 .client
                 .query(&raw_query)
                 .bind(Identifier(table_name.as_str()))
@@ -441,7 +440,7 @@ pub fn validate_type(input: &str) -> bool {
         match state {
             TypeParseState::WaitForIdent => {
                 match token {
-                    Token::Ident(ident) => { state = TypeParseState::ReadIdent; }
+                    Token::Ident(_ident) => { state = TypeParseState::ReadIdent; }
                     _ => { return false; }
                 }
             },
@@ -482,7 +481,7 @@ pub mod test {
 
     #[fixture]
     pub async fn repo() -> ClickHouseRepository {
-        ClickHouseRepository::new("clickhouse://...".to_string())
+        ClickHouseRepository::from_settings()
     }
 
     #[fixture]
@@ -891,32 +890,6 @@ pub mod test {
         let migration_plan = make_migration_plan(old, new);
 
         assert_eq!(migration_plan.columns.len(), 1);
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn test_type_binding(
-        unique_table_name: String,
-        #[future] repo: ClickHouseRepository,
-    ) {
-        // let nm = "name String) ORDER BY name; DROP ALL TABLES; SELECT * FROM system.tables ";
-        let nm = "name";
-        let tp = "String";
-        let nm2= "age";
-        let tp2 = "LOWCardinality(STRING)";
-        let repo = repo.await;
-        let res = repo
-            .get_client()
-            .query("CREATE TABLE ? (? ?, ? LowCardinality(String)) ORDER BY name")
-            .bind(Identifier(unique_table_name.as_str()))
-            .bind(Identifier(&nm))
-            .bind(Identifier(&tp))
-            .bind(Identifier(&nm2))
-            // .bind(&tp2)
-            .execute()
-            .await;
-        println!("Created table {}", unique_table_name.as_str());
-        assert!(res.is_ok(), "Create table error: {:?}", res);
     }
 
     #[rstest]

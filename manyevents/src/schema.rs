@@ -75,14 +75,6 @@ pub struct ComponentJsonSchema {
     pub properties: HashMap<String, JsonSchemaProperty>,
 }
 
-impl ComponentJsonSchema {
-    pub fn new() -> ComponentJsonSchema {
-        ComponentJsonSchema {
-            properties: HashMap::new(),
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EventJsonSchema {
     #[serde(rename = "x-manyevents-ch-order-by")]
@@ -166,7 +158,7 @@ pub fn validate_json_example() {
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use rstest::{fixture, rstest};
+    use rstest::rstest;
 
     #[rstest]
     fn test_json_schema() {

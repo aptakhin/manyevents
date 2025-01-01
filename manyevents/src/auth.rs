@@ -32,7 +32,7 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn new(user_id: String, secret_key: &[u8]) -> Result<Self, String> {
+    pub fn new(user_id: String, _secret_key: &[u8]) -> Result<Self, String> {
         let salt: [u8; 16] = rand::thread_rng().gen();
         let salt_hex = hex::encode(salt);
 
@@ -201,7 +201,7 @@ impl<'a> AccountRepository<'a> {
         &self,
         account_id: Uuid,
         tenant_id: Uuid,
-        action: AccountActionOnTenant,
+        _action: AccountActionOnTenant,
     ) -> Result<(), ()> {
         let result: Result<(Uuid, Uuid, Uuid), String> = sqlx::query_as(
             "
@@ -426,10 +426,10 @@ impl<'a> PushApiAuthRepository<'a> {
         }
     }
 
-    pub fn generate_token(tenant_id: Uuid, environment_id: Uuid) -> String {
+    pub fn generate_token(environment_id: Uuid) -> String {
         let secret_key = rand::thread_rng().gen::<[u8; 32]>();
         let secure_token =
-            Token::new(encode(tenant_id).clone(), &secret_key).expect("No token error");
+            Token::new(encode(environment_id).clone(), &secret_key).expect("No token error");
         format!("pt-{}", secure_token.token)
     }
 }
@@ -463,7 +463,7 @@ impl<'a> PushApiAuth<'a> {
         api_auth_repo: &'a PushApiAuthRepository<'a>,
         by_account_id: Uuid,
     ) -> Result<PushApiAuth, String> {
-        let token = ApiAuth::generate_token(environment_id);
+        let token = PushApiAuthRepository::generate_token(environment_id);
         let auth_result = api_auth_repo
             .add_token(token.clone(), environment_id, by_account_id)
             .await;
@@ -516,8 +516,6 @@ pub mod test {
     async fn test_check_auth_token_failed_on_wrong_token(#[future] pool: DbPool) {
         let pool = pool.await;
         let api_auth_repository = ApiAuthRepository { pool: &pool };
-        let account = add_random_email_account(&pool).await;
-        let auth = ApiAuth::create_new(account, &api_auth_repository).await;
 
         let check_auth = ApiAuth::from("wrong_token".to_string(), &api_auth_repository).await;
 

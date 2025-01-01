@@ -22,7 +22,6 @@ use minijinja::{context, path_loader, Environment};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::postgres::{PgPool, PgPoolOptions};
-use sqlx::Row;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tower::util::ServiceExt;
@@ -43,7 +42,7 @@ use crate::auth::{
     PushApiAuth, PushApiAuthRepository,
 };
 use crate::ch::{make_migration_plan, ChColumn, ClickHouseRepository};
-use crate::schema::{read_event_data, EventJsonSchema, JsonSchemaProperty, SerializationType};
+use crate::schema::{read_event_data, EventJsonSchema, SerializationType};
 use crate::scope::ScopeRepository;
 use crate::settings::Settings;
 use crate::tenant::{Tenant, TenantRepository};
@@ -60,13 +59,6 @@ async fn make_db() -> DbPool {
         .expect("Can't connect to the database")
 }
 
-fn internal_error<E>(err: E) -> (StatusCode, String)
-where
-    E: std::error::Error,
-{
-    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct CreateAccountRequest {
     email: String,
@@ -80,12 +72,12 @@ struct CreateAccountResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-struct CreateTenantRequest {
+pub struct CreateTenantRequest {
     title: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-struct CreateTenantResponse {
+pub struct CreateTenantResponse {
     is_success: bool,
     id: Option<Uuid>,
     clickhouse_read_dsn: String,
@@ -281,7 +273,7 @@ async fn create_tenant(
 
     let unique_suffix = format!("db_{}", tenant_id.clone().as_simple());
 
-    let repo = ClickHouseRepository::new("clickhouse://...".to_string());
+    let repo = ClickHouseRepository::from_settings();
 
     let cred = repo
         .create_credential(unique_suffix.clone(), "my_password".to_string())
@@ -312,7 +304,6 @@ async fn create_tenant(
     }
 
     let scope_repository = ScopeRepository { pool: &pool };
-    let api_auth_repository = ApiAuthRepository { pool: &pool };
     let push_api_auth_repository = PushApiAuthRepository { pool: &pool };
 
     let storage_credential_id = storage_credential_resp.unwrap();
@@ -690,7 +681,7 @@ pub mod test {
         account_inserted.expect("Should be inserted")
     }
 
-    struct TenantPushCreds {
+    pub struct TenantPushCreds {
         push_token: String,
         api_token: String,
         tenant_id: Uuid,
@@ -776,7 +767,6 @@ pub mod test {
         account_id: Uuid,
         bearer: String,
         app: &Router<()>,
-        pool: &DbPool,
     ) -> LinkTenantAccountResponse {
         let tenant_request = LinkTenantAccountRequest {
             tenant_id,
@@ -826,8 +816,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
-    async fn test_create_account(#[future] app: Router<()>, #[future] pool: DbPool) {
-        let pool = pool.await;
+    async fn test_create_account(#[future] app: Router<()>) {
         let random_email = Uuid::new_v4();
         let account_request = CreateAccountRequest {
             email: encode(random_email),
@@ -860,9 +849,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
-    async fn test_create_tenant_401_bad_token(#[future] app: Router<()>, #[future] pool: DbPool) {
-        let pool = pool.await;
-
+    async fn test_create_tenant_401_bad_token(#[future] app: Router<()>) {
         let tenant_request = CreateTenantRequest {
             title: "test-title".to_string(),
         };
@@ -909,7 +896,6 @@ pub mod test {
             account,
             auth_token,
             &app,
-            &pool,
         )
         .await;
 
@@ -918,9 +904,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
-    async fn test_link_tenant_401_bad_token(#[future] app: Router<()>, #[future] pool: DbPool) {
-        let pool = pool.await;
-
+    async fn test_link_tenant_401_bad_token(#[future] app: Router<()>) {
         let bearer = "invalid-token".to_string();
 
         let tenant_request = LinkTenantAccountRequest {
@@ -988,10 +972,8 @@ pub mod test {
     #[tokio::test]
     async fn test_create_schema(
         #[future] app: Router<()>,
-        #[future] pool: DbPool,
         #[future] tenant_and_push_creds: TenantPushCreds,
     ) {
-        use clickhouse::Row;
         let app = app.await;
         let tenant_and_push_creds = tenant_and_push_creds.await;
         let req = ApplyEventSchemaRequest {
@@ -1038,7 +1020,6 @@ pub mod test {
     #[tokio::test]
     async fn test_push_event(
         #[future] app: Router<()>,
-        #[future] pool: DbPool,
         #[future] tenant_and_push_creds: TenantPushCreds,
     ) {
         let app = app.await;
@@ -1118,7 +1099,6 @@ pub mod test {
     #[tokio::test]
     async fn test_push_event_failed(
         #[future] app: Router<()>,
-        #[future] pool: DbPool,
         #[future] tenant_and_push_creds: TenantPushCreds,
     ) {
         let push_request_str = r#"{ "event": {} }"#;

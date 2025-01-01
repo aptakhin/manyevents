@@ -67,25 +67,3 @@ impl Settings {
         )
     }
 }
-
-#[cfg(test)]
-pub mod test {
-    use super::*;
-    use rstest::{fixture, rstest};
-
-    // #[rstest]
-    // pub fn test_settings() {
-    //     let key = "POSTGRES_DSN";
-    //     unsafe {
-    //         env::set_var(key, "postgresql://...");
-    //     }
-
-    //     let settings = Settings::read_settings();
-
-    //     assert_eq!(settings.postgres_dsn, "postgresql://...".to_string());
-
-    //     unsafe {
-    //         env::set_var(key, "postgresql://...");
-    //     }
-    // }
-}

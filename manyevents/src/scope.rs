@@ -146,7 +146,7 @@ impl<'a> ScopeRepository<'a> {
         set: Value,
         by_account_id: Uuid,
     ) -> Result<(), String> {
-        let res: Result<Option<(_)>, Error> = sqlx::query(
+        let res: Result<Option<_>, Error> = sqlx::query(
             "
             INSERT INTO event
                 (tenant_id, name, description, created_by_account_id)
