@@ -1,4 +1,4 @@
-# Ubuntu/Debian Syste, install
+# Ubuntu/Debian System install
 
 ## PostgreSQL
 
@@ -8,7 +8,7 @@
 apt install postgresql -y
 ```
 
-## Clickhouse
+## ClickHouse
 
 [Source](https://clickhouse.com/docs/en/install#available-installation-options)
 

@@ -124,7 +124,6 @@ pub async fn ensure_header_authentification(
 
 #[derive(Debug, Clone)]
 pub struct PushApiInfo {
-    // pub tenant_id: Uuid,
     pub environment_id: Uuid,
 }
 
@@ -449,7 +448,6 @@ impl<'a> PushApiAuth<'a> {
         let check_resp = api_auth_repo.check_token(token.clone()).await;
         match check_resp {
             Ok((environment_id,)) => Ok(PushApiAuth {
-                // tenant_id,
                 environment_id,
                 token,
                 api_auth_repo,

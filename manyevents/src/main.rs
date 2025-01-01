@@ -262,15 +262,6 @@ async fn create_tenant(
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    // let action = AccountActionOnTenant::CanLinkAccount;
-    // let account_repository = AccountRepository { pool: &pool };
-    // let ensure_response = Account::new(&account_repository)
-    //     .ensure_permissions_on_tenant(by_account_id.clone(), req.tenant_id, action)
-    //     .await;
-    // if ensure_response.is_err() {
-    //     return Err(StatusCode::UNAUTHORIZED);
-    // }
-
     let unique_suffix = format!("db_{}", tenant_id.clone().as_simple());
 
     let repo = ClickHouseRepository::from_settings();
@@ -458,16 +449,6 @@ async fn apply_event_schema_sync(
         println!("Saving schema failed {:?}", save_res);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
-
-    // let migration_plan = make_migration_plan(empty, new);
-    // let migration = tenant_repo
-    //     .execute_init_migration(unique_table_name.clone(), migration_plan, false)
-    //     .await;
-
-    // if migration.is_err() {
-    //     println!("Migration {:?}", migration);
-    //     return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    // }
 
     Ok("OK".to_string())
 }

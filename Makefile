@@ -5,7 +5,7 @@ runw::
 	(cd manyevents && RUST_LOG=debug RUST_BACKTRACE=1 cargo watch -- cargo run)
 
 test::
-	(cd manyevents && cargo test --verbose)
+	(cd manyevents && cargo test)
 
 testw::
 	(cd manyevents && RUST_LOG=debug RUST_BACKTRACE=1 cargo watch --clear -- cargo test -- --show-output)
