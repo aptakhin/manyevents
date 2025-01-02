@@ -2,10 +2,12 @@ use clickhouse::error::Error;
 use clickhouse::sql::Identifier;
 use clickhouse::Client;
 use clickhouse::Row;
+use logos::Logos;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use logos::Logos;
+use tracing::debug;
+use tracing_test::traced_test;
 
 use crate::schema::{EventJsonSchema, JsonSchemaProperty, SerializationType};
 use crate::settings::Settings;
@@ -86,11 +88,11 @@ impl ClickHouseRepository {
             "INSERT INTO ? ({}) VALUES ({})",
             column_names_str, placeholders_str
         );
-        println!("sss: {}/{:?}", table_name, query);
+        debug!("sss: {}/{:?}", table_name, query);
         let mut y = self.client.query(&query).bind(Identifier(&table_name));
 
         for row in rows.iter() {
-            println!("pass: {}: {:?}", row.name.clone(), row.value.clone());
+            debug!("pass: {}: {:?}", row.name.clone(), row.value.clone());
 
             match &row.value {
                 SerializationType::Int(val) => y = y.bind(val),
@@ -101,7 +103,7 @@ impl ClickHouseRepository {
 
         let yy = y.execute().await;
 
-        println!("I: {:?}", yy);
+        debug!("I: {:?}", yy);
         yy
     }
 
@@ -118,7 +120,7 @@ impl ClickHouseRepository {
             .bind(Identifier(db_name.as_str()))
             .execute()
             .await;
-        println!("CREATE DATABASE {} {:?}", db_name.as_str(), res_2);
+        debug!("CREATE DATABASE {} {:?}", db_name.as_str(), res_2);
 
         let admin_role = format!("admin_role_{}", unique_suffix);
         let db_user = format!("user_{}", unique_suffix);
@@ -129,7 +131,7 @@ impl ClickHouseRepository {
             .bind(Identifier(admin_role.as_str()))
             .execute()
             .await;
-        println!("CREATE ROLE {} {:?}", admin_role.as_str(), res_3);
+        debug!("CREATE ROLE {} {:?}", admin_role.as_str(), res_3);
 
         let res_4 = self
             .client
@@ -138,7 +140,12 @@ impl ClickHouseRepository {
             .bind(Identifier(admin_role.as_str()))
             .execute()
             .await;
-        println!("GRANT SELECT {}->{} {:?}", admin_role.as_str(), db_name.as_str(), res_4);
+        debug!(
+            "GRANT SELECT {}->{} {:?}",
+            admin_role.as_str(),
+            db_name.as_str(),
+            res_4
+        );
 
         let res = self
             .client
@@ -148,7 +155,7 @@ impl ClickHouseRepository {
             .bind(Identifier(db_name.as_str()))
             .execute()
             .await;
-        println!("CREATE USER {} {:?}", db_user.as_str(), res);
+        debug!("CREATE USER {} {:?}", db_user.as_str(), res);
 
         let res = self
             .client
@@ -157,7 +164,12 @@ impl ClickHouseRepository {
             .bind(Identifier(db_user.as_str()))
             .execute()
             .await;
-        println!("GRANT ROLE {} TO {} {:?}", admin_role.as_str(), db_user.as_str(), res);
+        debug!(
+            "GRANT ROLE {} TO {} {:?}",
+            admin_role.as_str(),
+            db_user.as_str(),
+            res
+        );
 
         let db_host = Settings::read_settings().clickhouse_external_host;
         Ok(ClickHouseTenantCredential {
@@ -181,7 +193,9 @@ impl ClickHouseRepository {
             _ => Err(()),
         };
         if order_by.is_err() {
-            return Err(MigrationError::QueryError("Error order_by for query!".to_string()));
+            return Err(MigrationError::QueryError(
+                "Error order_by for query!".to_string(),
+            ));
         }
         let order_by = order_by.unwrap();
 
@@ -190,7 +204,9 @@ impl ClickHouseRepository {
             _ => Err(()),
         };
         if partition_by.is_err() {
-            return Err(MigrationError::QueryError("Error partition_by for query!".to_string()));
+            return Err(MigrationError::QueryError(
+                "Error partition_by for query!".to_string(),
+            ));
         }
         let partition_by = partition_by.unwrap();
 
@@ -208,7 +224,10 @@ impl ClickHouseRepository {
                 let new_column_type = change_column_type.unwrap();
                 let valid_type = validate_type(&new_column_type);
                 if !valid_type {
-                    return Err(MigrationError::InvalidType(name.clone(), new_column_type.clone()));
+                    return Err(MigrationError::InvalidType(
+                        name.clone(),
+                        new_column_type.clone(),
+                    ));
                 }
                 args.push((name, new_column_type));
             }
@@ -243,7 +262,7 @@ impl ClickHouseRepository {
         let exec = query.execute().await;
 
         if exec.is_err() {
-            println!("Migration {:?}/Query: {}", exec, raw_query.as_str());
+            debug!("Migration {:?}/Query: {}", exec, raw_query.as_str());
             return Err(MigrationError::QueryError(exec.unwrap_err().to_string()));
         }
 
@@ -262,7 +281,11 @@ impl ClickHouseRepository {
 
             let change_column_type: Result<String, ()> = match column.type_.clone() {
                 ChColumnMigrationStatus::Added(new) => Ok(new),
-                _ => return Err(MigrationError::QueryError("[Internal] Only Added supported!".to_string())),
+                _ => {
+                    return Err(MigrationError::QueryError(
+                        "[Internal] Only Added supported!".to_string(),
+                    ))
+                }
             };
 
             if change_column_type.is_ok() {
@@ -272,7 +295,11 @@ impl ClickHouseRepository {
 
         let _order_by: Result<(), ()> = match migration_plan.order_by {
             ChColumnMigrationStatus::NoChange => Ok(()),
-            _ => return Err(MigrationError::QueryError("[Internal] Only NoChange supported for order_by!".to_string())),
+            _ => {
+                return Err(MigrationError::QueryError(
+                    "[Internal] Only NoChange supported for order_by!".to_string(),
+                ))
+            }
         };
 
         for arg in &args {
@@ -349,7 +376,7 @@ pub fn make_migration_plan(from: EventJsonSchema, to: EventJsonSchema) -> ChTabl
     let mut columns: Vec<ChColumnMigration> = vec![];
 
     for (name, to_property) in &to.properties {
-        println!("{name:?} has {to_property:?}");
+        debug!("{name:?} has {to_property:?}");
 
         if !from.properties.contains_key(name) {
             columns.push(ChColumnMigration {
@@ -427,48 +454,62 @@ enum TypeParseState {
 
 pub fn validate_type(input: &str) -> bool {
     let mut lex = Token::lexer(input);
-    println!("Start parse CH type: {}", input);
+    debug!("Start parse CH type: {}", input);
 
     let mut state = TypeParseState::WaitForIdent;
 
     while let Some(token) = lex.next() {
-        println!(" state: {:?}, token: {:?}", state, token);
+        debug!(" state: {:?}, token: {:?}", state, token);
         if token.is_err() {
             return false;
         }
         let token = token.unwrap();
         match state {
-            TypeParseState::WaitForIdent => {
-                match token {
-                    Token::Ident(_ident) => { state = TypeParseState::ReadIdent; }
-                    _ => { return false; }
+            TypeParseState::WaitForIdent => match token {
+                Token::Ident(_ident) => {
+                    state = TypeParseState::ReadIdent;
+                }
+                _ => {
+                    return false;
                 }
             },
-            TypeParseState::ReadIdent => {
-                match token {
-                    Token::LParen => { state = TypeParseState::InsideWaitForParam; }
-                    _ => { return false; }
+            TypeParseState::ReadIdent => match token {
+                Token::LParen => {
+                    state = TypeParseState::InsideWaitForParam;
+                }
+                _ => {
+                    return false;
                 }
             },
-            TypeParseState::InsideWaitForParam => {
-                match token {
-                    Token::Ident(_ident) => { state = TypeParseState::InsideReadParam; }
-                    Token::Number => { state = TypeParseState::InsideReadParam; }
-                    Token::String_(_string) => { state = TypeParseState::InsideReadParam; }
-                    Token::RParen => { state = TypeParseState::Finish; }
-                    _ => { return false; }
+            TypeParseState::InsideWaitForParam => match token {
+                Token::Ident(_ident) => {
+                    state = TypeParseState::InsideReadParam;
+                }
+                Token::Number => {
+                    state = TypeParseState::InsideReadParam;
+                }
+                Token::String_(_string) => {
+                    state = TypeParseState::InsideReadParam;
+                }
+                Token::RParen => {
+                    state = TypeParseState::Finish;
+                }
+                _ => {
+                    return false;
                 }
             },
-            TypeParseState::InsideReadParam => {
-                match token {
-                    Token::Comma => { state = TypeParseState::InsideWaitForParam; }
-                    Token::RParen => { state = TypeParseState::Finish; }
-                    _ => { return false; }
+            TypeParseState::InsideReadParam => match token {
+                Token::Comma => {
+                    state = TypeParseState::InsideWaitForParam;
+                }
+                Token::RParen => {
+                    state = TypeParseState::Finish;
+                }
+                _ => {
+                    return false;
                 }
             },
-            TypeParseState::Finish => {
-                return false
-            }
+            TypeParseState::Finish => return false,
         }
     }
     state == TypeParseState::ReadIdent || state == TypeParseState::Finish
@@ -509,6 +550,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_create_credential(unique_db_name: String, #[future] repo: ClickHouseRepository) {
         let repo = repo.await;
 
@@ -528,12 +570,13 @@ pub mod test {
             .query("SHOW DATABASES")
             .fetch_all::<NameRow>()
             .await;
-        println!("CY {:?}", res);
+        debug!("CY {:?}", res);
         assert!(res.is_ok());
     }
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn generate_migration_by_schema_change(
         unique_table_name: String,
         #[future] repo: ClickHouseRepository,
@@ -567,6 +610,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn invalid_type_migration_error(
         unique_table_name: String,
         #[future] repo: ClickHouseRepository,
@@ -574,12 +618,12 @@ pub mod test {
         let migration_plan = ChTableMigration {
             order_by: ChColumnMigrationStatus::Added("name".to_string()),
             partition_by: ChColumnMigrationStatus::Added("name".to_string()),
-            columns: vec![
-                ChColumnMigration {
-                    name: "name".to_string(),
-                    type_: ChColumnMigrationStatus::Added("String) DROP TABLE Students; SELECT * FROM system.tables ".to_string()),
-                },
-            ],
+            columns: vec![ChColumnMigration {
+                name: "name".to_string(),
+                type_: ChColumnMigrationStatus::Added(
+                    "String) DROP TABLE Students; SELECT * FROM system.tables ".to_string(),
+                ),
+            }],
         };
         let repo = repo.await;
 
@@ -597,13 +641,14 @@ pub mod test {
                 assert_eq!(column, "name".to_string());
                 assert!(type_.contains("DROP TABLE"), "Check: {}", type_);
                 true
-            },
+            }
             _ => false,
         })
     }
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_access(
         unique_db_name: String,
         unique_table_name: String,
@@ -622,7 +667,11 @@ pub mod test {
             .bind(Identifier(unique_table_name.as_str()))
             .execute()
             .await;
-        println!("Created table {}/{}", unique_db_name.as_str(), unique_table_name.as_str());
+        debug!(
+            "Created table {}/{}",
+            unique_db_name.as_str(),
+            unique_table_name.as_str()
+        );
         assert!(res.is_ok(), "Create table error: {:?}", res);
 
         let tenant_repo = ClickHouseTenantRepository::new(credential);
@@ -643,6 +692,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_create_credential_and_migrate(
         unique_db_name: String,
         unique_table_name: String,
@@ -697,6 +747,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn generate_migration_by_schema_change_2_func(
         unique_table_name: String,
         #[future] repo: ClickHouseRepository,
@@ -740,6 +791,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn generate_migration_by_schema_change_2_steps(
         unique_table_name: String,
         #[future] repo: ClickHouseRepository,
@@ -783,6 +835,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn generate_migration_by_schema_change_2_steps_and_type_error(
         unique_table_name: String,
         #[future] repo: ClickHouseRepository,
@@ -823,17 +876,22 @@ pub mod test {
             migration_2.unwrap()
         );
         let err = migration_2.unwrap_err();
-        assert!(match err.clone() {
-            MigrationError::InvalidType(column, type_) => {
-                assert_eq!(column, "age".to_string());
-                assert!(type_.contains("DROP Students"), "Check: {}", type_);
-                true
+        assert!(
+            match err.clone() {
+                MigrationError::InvalidType(column, type_) => {
+                    assert_eq!(column, "age".to_string());
+                    assert!(type_.contains("DROP Students"), "Check: {}", type_);
+                    true
+                }
+                _ => false,
             },
-            _ => false,
-        }, "Migration_2 error: {:?}", err);
+            "Migration_2 error: {:?}",
+            err
+        );
     }
 
     #[rstest]
+    #[traced_test]
     fn diff_entities_same_schema() {
         let mut the_same = EventJsonSchema::new();
         the_same.x_manyevents_ch_order_by = "name".to_string();
@@ -850,6 +908,7 @@ pub mod test {
     }
 
     #[rstest]
+    #[traced_test]
     fn diff_entities_new_field() {
         let empty = EventJsonSchema::new();
         let mut new = EventJsonSchema::new();
@@ -867,6 +926,7 @@ pub mod test {
     }
 
     #[rstest]
+    #[traced_test]
     fn diff_entities_schema_changed_type() {
         let mut old = EventJsonSchema::new();
         old.x_manyevents_ch_order_by = "name".to_string();
@@ -893,6 +953,7 @@ pub mod test {
     }
 
     #[rstest]
+    #[traced_test]
     fn test_type_lexer() {
         let mut lex = Token::lexer("String");
 
@@ -901,10 +962,14 @@ pub mod test {
     }
 
     #[rstest]
+    #[traced_test]
     fn test_type_lexer_compound() {
         let mut lex = Token::lexer("LowCardinality(String)");
 
-        assert_eq!(lex.next(), Some(Ok(Token::Ident("LowCardinality".to_string()))));
+        assert_eq!(
+            lex.next(),
+            Some(Ok(Token::Ident("LowCardinality".to_string())))
+        );
         assert_eq!(lex.next(), Some(Ok(Token::LParen)));
         assert_eq!(lex.next(), Some(Ok(Token::Ident("String".to_string()))));
         assert_eq!(lex.next(), Some(Ok(Token::RParen)));
@@ -912,6 +977,7 @@ pub mod test {
     }
 
     #[rstest]
+    #[traced_test]
     fn test_type_validation() {
         assert!(validate_type("String"));
         assert!(validate_type("LowCardinality(String)"));

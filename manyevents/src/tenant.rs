@@ -1,4 +1,5 @@
 use crate::DbPool;
+use tracing::debug;
 use uuid::Uuid;
 
 pub struct TenantRepository<'a> {
@@ -24,7 +25,7 @@ impl<'a> TenantRepository<'a> {
         .await
         .and_then(|r: (Uuid,)| Ok(r.0))
         .or_else(|e| {
-            println!("Database query error: {}", e);
+            debug!("Database query error: {}", e);
             Err(())
         })
     }
@@ -43,7 +44,7 @@ impl<'a> TenantRepository<'a> {
         .await
         .and_then(|r: (Uuid,)| Ok(r.0))
         .or_else(|e| {
-            println!("Database query error: {}", e);
+            debug!("Database query error: {}", e);
             Err(())
         })
     }

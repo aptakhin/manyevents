@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use tracing::debug;
+use tracing_test::traced_test;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum SerializationType {
@@ -34,10 +36,10 @@ pub struct EventError<'a> {
 pub fn read_event_data(event_root: &Value) -> Result<Event, EventError> {
     let mut fill_units: Vec<Unit> = Vec::new();
     let mut unit_values: Vec<UnitValue> = Vec::new();
-    println!("!>: go common");
+    debug!("!>: go common");
     for val in event_root.as_object().unwrap() {
         let (key, v) = val;
-        println!(">>: {}", key);
+        debug!(">>: {}", key);
         let column_name = key.to_string();
 
         let mut set_value = SerializationType::Str(String::new());
@@ -161,11 +163,13 @@ pub mod test {
     use rstest::rstest;
 
     #[rstest]
+    #[traced_test]
     fn test_json_schema() {
         validate_json_example()
     }
 
     #[rstest]
+    #[traced_test]
     fn parse_event_json_schema_successfully() {
         let js = json!({
             "type": "object",
@@ -205,6 +209,7 @@ pub mod test {
     }
 
     #[rstest]
+    #[traced_test]
     fn parse_component_json_schema_successfully() {
         let js = json!({
             "type": "object",

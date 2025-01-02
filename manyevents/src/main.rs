@@ -16,6 +16,7 @@ use axum_extra::{
     TypedHeader,
 };
 use std::env;
+use tracing::{debug, info, warn};
 
 use http_body_util::BodyExt;
 use minijinja::{context, path_loader, Environment};
@@ -26,6 +27,7 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tower::util::ServiceExt;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_test::traced_test;
 
 use uuid::Uuid;
 
@@ -155,7 +157,7 @@ async fn post_signin(
         .signin(signin_form.email, signin_form.password)
         .await;
 
-    println!("Log1 {:?}", signin_response);
+    debug!("Log1 {:?}", signin_response);
 
     if signin_response.is_err() {
         let mut env = Environment::new();
@@ -167,7 +169,7 @@ async fn post_signin(
     let api_auth_repository = ApiAuthRepository { pool: &pool };
     let auth_token = ApiAuth::create_new(signin_response.unwrap(), &api_auth_repository).await;
 
-    println!("Log2 {:?}", auth_token);
+    debug!("Log2 {:?}", auth_token);
 
     if auth_token.is_err() {
         // Internal error
@@ -270,7 +272,7 @@ async fn create_tenant(
         .create_credential(unique_suffix.clone(), "my_password".to_string())
         .await;
 
-    println!("Unique_suffix {}", unique_suffix.clone());
+    debug!("Unique_suffix {}", unique_suffix.clone());
 
     assert!(cred.is_ok());
     let cred = cred.unwrap();
@@ -289,7 +291,7 @@ async fn create_tenant(
             )
             .await;
         if storage_credential_resp.is_err() {
-            println!("storage_credential_resp {:?}", storage_credential_resp);
+            debug!("storage_credential_resp {:?}", storage_credential_resp);
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
@@ -383,14 +385,14 @@ async fn apply_event_schema_sync(
 
     let new: Result<EventJsonSchema, _> = serde_json::from_value(req.schema);
     if new.is_err() {
-        println!("EventJsonSchema parser failed {:?}", new);
+        debug!("EventJsonSchema parser failed {:?}", new);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     let unique_table_name = req.name;
 
     let scope_repository = ScopeRepository { pool: &pool };
-    println!(
+    debug!(
         "Getting schema {}/{}",
         req.tenant_id.clone(),
         unique_table_name.clone()
@@ -398,7 +400,6 @@ async fn apply_event_schema_sync(
     let event_schema_res = scope_repository
         .get_event_schema(req.tenant_id.clone(), unique_table_name.clone())
         .await;
-    println!("XX: {:?}", event_schema_res.clone());
 
     let new = new.unwrap();
 
@@ -406,7 +407,7 @@ async fn apply_event_schema_sync(
         let event_schema_res = event_schema_res.unwrap();
         let old: Result<EventJsonSchema, _> = serde_json::from_value(event_schema_res);
         if old.is_err() {
-            println!("Invalid json {:?}", old);
+            debug!("Invalid json {:?}", old);
         }
         let old = old.unwrap();
         let migration_plan = make_migration_plan(old, new.clone());
@@ -415,7 +416,7 @@ async fn apply_event_schema_sync(
             .await;
 
         if migration.is_err() {
-            println!("Migration {:?}", migration);
+            debug!("Migration {:?}", migration);
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     } else {
@@ -426,7 +427,7 @@ async fn apply_event_schema_sync(
             .await;
 
         if migration.is_err() {
-            println!("Migration {:?}", migration);
+            debug!("Migration {:?}", migration);
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
@@ -440,13 +441,13 @@ async fn apply_event_schema_sync(
             by_account_id.clone(),
         )
         .await;
-    println!(
+    debug!(
         "Saving schema {}/{}",
         req.tenant_id.clone(),
         unique_table_name.clone()
     );
     if save_res.is_err() {
-        println!("Saving schema failed {:?}", save_res);
+        debug!("Saving schema failed {:?}", save_res);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
@@ -462,7 +463,6 @@ async fn push_event(
     if auth_response.is_err() {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    println!("Push-event auth {:?}", auth_response);
     let auth_response = auth_response.unwrap();
 
     let body_str = std::str::from_utf8(&body).unwrap();
@@ -500,7 +500,7 @@ async fn push_event(
     let tenant_id = res.0;
 
     let unique_suffix = format!("db_{}", tenant_id.clone().as_simple());
-    println!("Use tenantdb {unique_suffix} for tenant_id={tenant_id}");
+    debug!("Use tenantdb {unique_suffix} for tenant_id={tenant_id}");
     let tenant_repo = ClickHouseRepository::choose_tenant(&unique_suffix);
 
     let event = result.unwrap();
@@ -521,7 +521,7 @@ async fn push_event(
                 },
                 value: value.value.clone(),
             };
-            println!("ins: {}: {:?}", column.name.clone(), value.value.clone());
+            debug!("ins: {}: {:?}", column.name.clone(), value.value.clone());
             if column.name == "x-manyevents-name" {
                 if let SerializationType::Str(str) = value.value.clone() {
                     table_name = Some(str.clone());
@@ -598,33 +598,64 @@ async fn routes_app() -> Router<()> {
     router
 }
 
+fn init_logging() {
+    let settings = Settings::read_settings();
+    if settings.local_run {
+        let pretty_format = tracing_subscriber::fmt::format()
+            .with_level(true)
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .with_file(true)
+            .with_line_number(true)
+            .pretty();
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| format!("{}=debug", env!("CARGO_CRATE_NAME")).into()),
+            )
+            .with(tracing_subscriber::fmt::layer().event_format(pretty_format))
+            .init();
+    } else {
+        let json_format = tracing_subscriber::fmt::format()
+            .with_level(true)
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .with_file(true)
+            .with_line_number(true)
+            .json();
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| format!("{}=debug", env!("CARGO_CRATE_NAME")).into()),
+            )
+            .with(tracing_subscriber::fmt::layer().event_format(json_format))
+            .init();
+    }
+}
+
 #[tokio::main]
 async fn main() {
+    init_logging();
+
     let args: Vec<String> = env::args().collect();
 
     if args.len() == 2 {
         if args[1] == "migrate" {
             let pool = make_db().await;
-
+            info!("Starting migrations");
             let result = sqlx::migrate!("db/migrations")
                 .run(&pool)
                 .await
                 .expect("Migrations panic!");
-            println!("Migration result {:?}", result);
+            info!("Migration result {:?}", result);
             return;
         }
     }
 
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| format!("{}=debug", env!("CARGO_CRATE_NAME")).into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
-
     let listener = TcpListener::bind("127.0.0.1:8000").await.unwrap();
-    tracing::debug!("listening on {}", listener.local_addr().unwrap());
+    info!("Listening on {}", listener.local_addr().unwrap());
 
     let app = routes_app().await;
     axum::serve(listener, app).await.unwrap();
@@ -779,6 +810,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_create_tenant_successful(#[future] app: Router<()>, #[future] pool: DbPool) {
         let pool = pool.await;
         let account = add_random_email_account(&pool).await;
@@ -797,6 +829,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_create_account(#[future] app: Router<()>) {
         let random_email = Uuid::new_v4();
         let account_request = CreateAccountRequest {
@@ -830,6 +863,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_create_tenant_401_bad_token(#[future] app: Router<()>) {
         let tenant_request = CreateTenantRequest {
             title: "test-title".to_string(),
@@ -858,6 +892,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_link_tenant_account_successful(
         #[future] app: Router<()>,
         #[future] pool: DbPool,
@@ -885,6 +920,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_link_tenant_401_bad_token(#[future] app: Router<()>) {
         let bearer = "invalid-token".to_string();
 
@@ -914,6 +950,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_link_tenant_401_wrong_tenant(#[future] app: Router<()>, #[future] pool: DbPool) {
         // Create account1 and tenant1, but attempt to give access from the user unrelated to tenant
         let app = app.await;
@@ -951,6 +988,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_create_schema(
         #[future] app: Router<()>,
         #[future] tenant_and_push_creds: TenantPushCreds,
@@ -999,6 +1037,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_push_event(
         #[future] app: Router<()>,
         #[future] tenant_and_push_creds: TenantPushCreds,
@@ -1078,6 +1117,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_push_event_failed(
         #[future] app: Router<()>,
         #[future] tenant_and_push_creds: TenantPushCreds,
@@ -1144,6 +1184,7 @@ pub mod test {
     #[case("/signin")]
     #[case("/docs")]
     #[tokio::test]
+    #[traced_test]
     async fn get_root(#[case] s: impl AsRef<str>, #[future] app: Router<()>) {
         let response = app
             .await
@@ -1165,6 +1206,7 @@ pub mod test {
     #[rstest]
     #[case("/dashboard")]
     #[tokio::test]
+    #[traced_test]
     async fn check_unauthorized(#[case] s: impl AsRef<str>, #[future] app: Router<()>) {
         let response = app
             .await
@@ -1182,6 +1224,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_post_signin_successful_redirect(#[future] app: Router<()>) {
         let push_request_str = r#"email=aaaa&password=xxx"#;
 
@@ -1205,6 +1248,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_apply_event_double_schema_change(
         #[future] app: Router<()>,
         #[future] pool: DbPool,

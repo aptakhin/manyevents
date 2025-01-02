@@ -1,6 +1,7 @@
 use crate::DbPool;
 use crate::Value;
 use sqlx::Error;
+use tracing::debug;
 use uuid::Uuid;
 
 pub struct ScopeRepository<'a> {
@@ -34,7 +35,7 @@ impl<'a> ScopeRepository<'a> {
         .await
         .and_then(|r: (Uuid,)| Ok(r.0))
         .or_else(|e| {
-            println!("Database query error: {}", e);
+            debug!("Database query error: {}", e);
             Err(())
         })
     }
@@ -55,7 +56,7 @@ impl<'a> ScopeRepository<'a> {
             Ok(Some((id,))) => Ok(id),
             Ok(None) => Err(()),
             Err(e) => {
-                println!("SQL error in get_tenant_storage_credential: {}", e);
+                debug!("SQL error in get_tenant_storage_credential: {}", e);
                 Err(())
             }
         }
@@ -83,7 +84,7 @@ impl<'a> ScopeRepository<'a> {
         .await
         .and_then(|r: (Uuid,)| Ok(r.0))
         .or_else(|e| {
-            println!("Database query error: {}", e);
+            debug!("Database query error: {}", e);
             Err(())
         })
     }

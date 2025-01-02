@@ -8,7 +8,7 @@ test::
 	(cd manyevents && cargo test)
 
 testw::
-	(cd manyevents && RUST_LOG=debug RUST_BACKTRACE=1 cargo watch --clear -- cargo test -- --show-output)
+	(cd manyevents && RUST_LOG=debug RUST_BACKTRACE=1 cargo watch --clear -- cargo test -- --nocapture)
 
 build::
 	(cd manyevents && cargo build --locked)

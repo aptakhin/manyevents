@@ -5,6 +5,8 @@ use uuid::Uuid;
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use tracing::debug;
+use tracing_test::traced_test;
 
 use crate::scope::ScopeRepository;
 use crate::settings::Settings;
@@ -73,12 +75,12 @@ where
         let headers = req.headers();
 
         let header_token = headers.get("Authorization");
-        println!("header_token {:?}", header_token);
+        debug!("header_token {:?}", header_token);
 
         let cookies = CookieJar::from_headers(headers);
 
         let cookie_token = cookies.get("_s");
-        println!("Cook {:?}", cookie_token);
+        debug!("Cook {:?}", cookie_token);
         if header_token.is_none() && cookie_token.is_none() {
             return Err(StatusCode::UNAUTHORIZED);
         }
@@ -86,12 +88,12 @@ where
         let mut check_token = String::new();
         if cookie_token.is_some() {
             check_token = cookie_token.unwrap().value().to_string();
-            println!("Cook2 {:?}", check_token.clone());
+            debug!("Cook2 {:?}", check_token.clone());
         }
 
         if header_token.is_some() {
             check_token = header_token.unwrap().to_str().unwrap().to_string();
-            println!("Cook1 {:?}", check_token.clone());
+            debug!("Cook1 {:?}", check_token.clone());
             if check_token.starts_with("Bearer ") {
                 check_token = check_token.strip_prefix("Bearer ").unwrap().to_string();
             }
@@ -180,7 +182,7 @@ impl<'a> AccountRepository<'a> {
         .await
         .and_then(|r| Ok(r))
         .or_else(|e| {
-            println!("Database query error: {}", e);
+            debug!("Database query error: {}", e);
             Err("nooo".to_string())
         });
 
@@ -215,7 +217,7 @@ impl<'a> AccountRepository<'a> {
         .await
         .and_then(|r| Ok(r))
         .or_else(|e| {
-            println!("Database query error: {}", e);
+            debug!("Database query error: {}", e);
             Err("nooo".to_string())
         });
 
@@ -277,7 +279,7 @@ impl<'a> ApiAuthRepository<'a> {
         .await
         .and_then(|r| Ok(r))
         .or_else(|e| {
-            println!("Database query error: {}", e);
+            debug!("Database query error: {}", e);
             Err("nooo".to_string())
         });
 
@@ -304,7 +306,7 @@ impl<'a> ApiAuthRepository<'a> {
         .await
         .and_then(|r| Ok(r))
         .or_else(|e| {
-            println!("Database query error: {}", e);
+            debug!("Database query error: {}", e);
             Err("nooo".to_string())
         });
 
@@ -389,7 +391,7 @@ impl<'a> PushApiAuthRepository<'a> {
         .await
         .and_then(|r| Ok(r))
         .or_else(|e| {
-            println!("Database query error: {}", e);
+            debug!("Database query error: {}", e);
             Err("nooo".to_string())
         });
 
@@ -415,7 +417,7 @@ impl<'a> PushApiAuthRepository<'a> {
         .await
         .and_then(|r| Ok(r))
         .or_else(|e| {
-            println!("Database query error: {}", e);
+            debug!("Database query error: {}", e);
             Err("nooo".to_string())
         });
 
@@ -485,6 +487,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_add_account(#[future] pool: DbPool) {
         let pool = pool.await;
 
@@ -495,6 +498,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_auth_token_successful(#[future] pool: DbPool) {
         let pool = pool.await;
         let api_auth_repository = ApiAuthRepository { pool: &pool };
@@ -511,6 +515,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_check_auth_token_failed_on_wrong_token(#[future] pool: DbPool) {
         let pool = pool.await;
         let api_auth_repository = ApiAuthRepository { pool: &pool };
@@ -522,6 +527,7 @@ pub mod test {
 
     #[rstest]
     #[tokio::test]
+    #[traced_test]
     async fn test_push_auth_token_successful(#[future] app: Router<()>, #[future] pool: DbPool) {
         let app = app.await;
         let pool = pool.await;

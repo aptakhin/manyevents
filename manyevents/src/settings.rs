@@ -1,6 +1,7 @@
 use std::env;
 
 pub struct Settings {
+    pub local_run: bool,
     pub secret_key: String,
     pub postgres_dsn: String,
     pub clickhouse_dsn: String,
@@ -9,11 +10,16 @@ pub struct Settings {
 
 impl Settings {
     pub fn read_settings() -> Settings {
+        let local_run: bool = env::var("MANYEVENTS_LOCAL_RUN")
+            .unwrap_or_default()
+            .parse()
+            .unwrap_or(false);
         let secret_key = env::var("MANYEVENTS_SECRET_KEY").unwrap();
         let postgres_dsn = Self::build_postgres_dsn();
         let clickhouse_dsn = Self::build_clickhouse_dsn();
         let clickhouse_external_host = env::var("MANYEVENTS_CH_EXTERNAL_HOST").unwrap();
         Settings {
+            local_run,
             secret_key,
             postgres_dsn,
             clickhouse_dsn,
