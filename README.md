@@ -7,7 +7,7 @@ Business and tech observability in the one product. Because this separation hurt
 `jq` command in the end is optional, it's for more readable output.
 
 ```bash
-curl "https://manyevents.cloud/manage-api/v0-unstable/signin" -d '{"email": "your_email@.com", "password": "<your_password>"}' -H "Content-Type: application/json" | jq
+curl "https://app.manyevents.cloud/manage-api/v0-unstable/signin" -d '{"email": "your_email@.com", "password": "<your_password>"}' -H "Content-Type: application/json" | jq
 ```
 
 Got response:
@@ -22,7 +22,7 @@ Got response:
 Use `auth_token` in `Authorization: Bearer <<TOKEN>>` within next queries, except `push-event` endpoint, which requires dedicated `push_token` we will receive now. Let's create own company-tenant.
 
 ```bash
-curl "https://manyevents.cloud/manage-api/v0-unstable/create-tenant" -d '{"title": "my-company"}' -H "Content-Type: application/json" -H "Authorization: Bearer 962a235f2661439d923bdf3def535e0f7acb6890fb241822a1cd9cd47b636db5" | jq
+curl "https://app.manyevents.cloud/manage-api/v0-unstable/create-tenant" -d '{"title": "my-company"}' -H "Content-Type: application/json" -H "Authorization: Bearer 962a235f2661439d923bdf3def535e0f7acb6890fb241822a1cd9cd47b636db5" | jq
 ```
 
 Got response:
@@ -43,7 +43,7 @@ Got response:
 Let's declare a schema for wide-event named `main`. In manage api we still use our first bearer token.
 
 ```bash
-curl "https://manyevents.cloud/manage-api/v0-unstable/apply-event-schema-sync" \
+curl "https://app.manyevents.cloud/manage-api/v0-unstable/apply-event-schema-sync" \
 -d '{"tenant_id": "3f921452-33f3-4f54-b124-a313acb6922e", "name": "main", "schema": {"type": "object",
     "properties": {
         "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
@@ -68,7 +68,7 @@ OK
 We will use `push_token` to send new data.
 
 ```bash
-curl "https://manyevents.cloud/push-api/v0-unstable/push-event" -d '{"x-manyevents-name": "main",
+curl "https://app.manyevents.cloud/push-api/v0-unstable/push-event" -d '{"x-manyevents-name": "main",
     "span_id": "xxxx",
     "span_start_time": 1234567890,
     "span_end_time": 1234567892,
