@@ -1,0 +1,46 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://example.com/product.schema.json",
+    "title": "Web event",
+    "description": "A product in the catalog",
+    "type": "object",
+    "properties": {
+        "hostname": {
+            "description": "Hostname",
+            "type": "string"
+        },
+        "protocol": {
+            "description": "Protocol with :",
+            "type": "string"
+        },
+        "path": {
+            "description": "Path with /",
+            "type": "string"
+        },
+        "origin": {
+            "description": "Origin",
+            "type": "string"
+        },
+        "queryArgs": {
+            "description": "Query arguments",
+            "type": "array",
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "minItems": 2,
+                "maxItems": 2
+            }
+        },
+        "hash": {
+            "description": "Request #hash if given",
+            "type": "string"
+        },
+        "browser": {
+            "description": "Client browser-agent",
+            "type": "string"
+        }
+    },
+    "required": [ "hostname", "protocol", "path", "origin", "queryArgs", "hash", "browser" ]
+}

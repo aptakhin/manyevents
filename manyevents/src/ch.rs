@@ -3,13 +3,10 @@ use clickhouse::sql::Identifier;
 use clickhouse::Client;
 use clickhouse::Row;
 use logos::Logos;
-use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use tracing::debug;
-use tracing_test::traced_test;
 
-use crate::schema::{EventJsonSchema, JsonSchemaProperty, SerializationType};
+use crate::schema::{EventJsonSchema, SerializationType};
 use crate::settings::Settings;
 
 #[derive(Row, Deserialize, Debug)]
@@ -518,7 +515,11 @@ pub fn validate_type(input: &str) -> bool {
 #[cfg(test)]
 pub mod test {
     use super::*;
+    use crate::schema::JsonSchemaProperty;
+    use rand::Rng;
     use rstest::{fixture, rstest};
+    use std::collections::HashMap;
+    use tracing_test::traced_test;
 
     #[fixture]
     pub async fn repo() -> ClickHouseRepository {

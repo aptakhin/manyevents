@@ -6,9 +6,7 @@ use uuid::Uuid;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tracing::debug;
-use tracing_test::traced_test;
 
-use crate::scope::ScopeRepository;
 use crate::settings::Settings;
 use axum::{
     async_trait,
@@ -482,8 +480,10 @@ impl<'a> PushApiAuth<'a> {
 pub mod test {
     use super::*;
     use crate::test::{add_random_email_account, app, create_tenant, pool};
+    use crate::ScopeRepository;
     use axum::Router;
     use rstest::rstest;
+    use tracing_test::traced_test;
 
     #[rstest]
     #[tokio::test]

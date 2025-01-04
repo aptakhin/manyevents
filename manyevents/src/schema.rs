@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use tracing::debug;
-use tracing_test::traced_test;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum SerializationType {
@@ -102,71 +101,12 @@ impl EventJsonSchema {
     }
 }
 
-pub fn validate_json_example() {
-    use jsonschema::{Retrieve, Uri};
-    use serde_json::{json, Value};
-    use std::collections::HashMap;
-
-    struct InMemoryRetriever {
-        schemas: HashMap<String, Value>,
-    }
-
-    impl Retrieve for InMemoryRetriever {
-        fn retrieve(
-            &self,
-            uri: &Uri<&str>,
-        ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
-            self.schemas
-                .get(uri.as_str())
-                .cloned()
-                .ok_or_else(|| format!("Schema not found: {uri}").into())
-        }
-    }
-
-    let mut schemas = HashMap::new();
-    schemas.insert(
-        "https://example.com/person.json".to_string(),
-        json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string", "x-manyevents-ch-type": "String" },
-                "age": { "type": "integer", "x-manyevents-ch-type": "Int32" }
-            },
-            "required": ["name", "age"]
-        }),
-    );
-
-    let retriever = InMemoryRetriever { schemas };
-
-    let schema = json!({
-        "$ref": "https://example.com/person.json"
-    });
-
-    let validator = jsonschema::options()
-        .with_retriever(retriever)
-        .build(&schema)
-        .unwrap();
-
-    assert!(validator.is_valid(&json!({
-        "name": "Alice",
-        "age": 30,
-    })));
-
-    assert!(!validator.is_valid(&json!({
-        "name": "Bob",
-    })));
-}
-
 #[cfg(test)]
 pub mod test {
     use super::*;
     use rstest::rstest;
-
-    #[rstest]
-    #[traced_test]
-    fn test_json_schema() {
-        validate_json_example()
-    }
+    use serde_json::json;
+    use tracing_test::traced_test;
 
     #[rstest]
     #[traced_test]

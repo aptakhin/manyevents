@@ -16,23 +16,22 @@ use axum_extra::{
     TypedHeader,
 };
 use std::env;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::{debug, info, warn};
 
-use http_body_util::BodyExt;
 use minijinja::{context, path_loader, Environment};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tower::util::ServiceExt;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use tracing_test::traced_test;
 
 use uuid::Uuid;
 
 mod auth;
 mod ch;
+mod external;
 mod schema;
 mod scope;
 mod settings;
@@ -44,6 +43,7 @@ use crate::auth::{
     PushApiAuth, PushApiAuthRepository,
 };
 use crate::ch::{make_migration_plan, ChColumn, ClickHouseRepository};
+use crate::external::web_send_event;
 use crate::schema::{read_event_data, EventJsonSchema, SerializationType};
 use crate::scope::ScopeRepository;
 use crate::settings::Settings;
@@ -582,6 +582,11 @@ async fn routes_app() -> Router<()> {
         .route("/signin", get(get_signin).post(post_signin))
         .route("/docs", get(get_docs))
         .route("/dashboard", get(get_dashboard))
+        .nest_service(
+            "/assets",
+            ServeDir::new("static/assets")
+                .not_found_service(ServeFile::new("static/assets/not_found.html")),
+        )
         .route("/push-api/v0-unstable/push-event", post(push_event))
         .route("/manage-api/v0-unstable/signin", post(create_account))
         .route("/manage-api/v0-unstable/create-tenant", post(create_tenant))
@@ -592,6 +597,10 @@ async fn routes_app() -> Router<()> {
         .route(
             "/manage-api/v0-unstable/apply-event-schema-sync",
             post(apply_event_schema_sync),
+        )
+        .route(
+            "/external-api/v0-unstable/web/send-event",
+            post(web_send_event),
         )
         .with_state(pool);
 
@@ -669,7 +678,11 @@ pub mod test {
         http::{self, Request, StatusCode},
     };
     use hex::encode;
+    use http_body_util::BodyExt;
     use rstest::{fixture, rstest};
+    use serde_json::json;
+    use tower::util::ServiceExt;
+    use tracing_test::traced_test;
 
     #[fixture]
     pub async fn app() -> Router<()> {
