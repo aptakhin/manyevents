@@ -1,0 +1,52 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://example.com/product.schema.json",
+    "title": "Web event",
+    "description": "A product in the catalog",
+    "type": "object",
+    "properties": {
+        "hostname": {
+            "description": "Hostname",
+            "type": "string",
+            "x-manyevents-ch-type": "LowCardinality(String)"
+        },
+        "protocol": {
+            "description": "Protocol with :",
+            "type": "string",
+            "x-manyevents-ch-type": "LowCardinality(String)"
+        },
+        "path": {
+            "description": "Path with the leading / if presented",
+            "type": "string",
+            "x-manyevents-ch-type": "String"
+        },
+        "origin": {
+            "description": "Origin",
+            "type": "string",
+            "x-manyevents-ch-type": "String"
+        },
+        "queryArgs": {
+            "description": "Query arguments",
+            "type": "array",
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "minItems": 2,
+                "maxItems": 2
+            }
+        },
+        "hash": {
+            "description": "Request #hash if given",
+            "type": "string",
+            "x-manyevents-ch-type": "String"
+        },
+        "browser": {
+            "description": "Client browser-agent",
+            "type": "string",
+            "x-manyevents-ch-type": "String"
+        }
+    },
+    "required": [ "browser" ]
+}

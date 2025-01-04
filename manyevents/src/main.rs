@@ -23,6 +23,7 @@ use minijinja::{context, path_loader, Environment};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::postgres::{PgPool, PgPoolOptions};
+use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -667,7 +668,12 @@ async fn main() {
     info!("Listening on {}", listener.local_addr().unwrap());
 
     let app = routes_app().await;
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }
 
 #[cfg(test)]

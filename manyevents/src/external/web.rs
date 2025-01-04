@@ -4,13 +4,14 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
+use std::net::SocketAddr;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SendEventResponse {
     ok: bool,
 }
 
-pub fn web_transform_event(data: Value) -> Result<(), ()> {
+pub fn validate_json_by_schema(data: Value, schema: Value) -> Result<(), ()> {
     struct InMemoryRetriever {
         schemas: HashMap<String, Value>,
     }
@@ -27,13 +28,8 @@ pub fn web_transform_event(data: Value) -> Result<(), ()> {
         }
     }
 
-    let file = File::open("src/external/schemas/web-input.json").unwrap();
-    let reader = BufReader::new(file);
-    let value: Value = serde_json::from_reader(reader).unwrap();
-    // println!("Generic parse: {}", value);
-
     let mut schemas = HashMap::new();
-    schemas.insert("https://example.com/web.json".to_string(), value);
+    schemas.insert("https://example.com/web.json".to_string(), schema);
 
     let retriever = InMemoryRetriever { schemas };
 
@@ -55,6 +51,24 @@ pub fn web_transform_event(data: Value) -> Result<(), ()> {
     }
 }
 
+pub fn web_transform_event(data: Value, ip: SocketAddr) -> Result<Value, ()> {
+    let file = File::open("static/schemas/web-input.json").unwrap();
+    let reader = BufReader::new(file);
+    let schema: Value = serde_json::from_reader(reader).unwrap();
+
+    let result = validate_json_by_schema(data.clone(), schema);
+
+    if result.is_err() {
+        return Err(());
+    }
+
+    let result = result.unwrap();
+    let mut data = data;
+    // the best ip -> country conversion
+    data["country"] = "earth".into();
+    Ok(data)
+}
+
 #[cfg(test)]
 pub mod test {
     use super::*;
@@ -74,8 +88,25 @@ pub mod test {
             "origin": "http://localhost:8000",
         });
 
-        let res = web_transform_event(js.clone());
+        let res = web_transform_event(
+            js.clone(),
+            "127.0.0.1:8000".parse().expect("Parse addr failed"),
+        );
 
-        assert!(res.is_ok(), "{:?}", js)
+        assert!(res.is_ok(), "{:?}", js);
+        let tjs = res.unwrap();
+        assert_eq!(
+            tjs,
+            json!({
+                "country": "earth",
+                "hostname": "localhost",
+                "path": "/assets/test.html",
+                "hash": "#hello",
+                "queryArgs": [["params", ""]],
+                "browser": "Mozilla/5.0",
+                "protocol": "http:",
+                "origin": "http://localhost:8000",
+            })
+        )
     }
 }
