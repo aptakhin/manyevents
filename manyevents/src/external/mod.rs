@@ -1,3 +1,4 @@
+pub mod client;
 pub mod web;
 
 use crate::BufferRequestBody;
@@ -23,8 +24,6 @@ async fn web_send_event_impl(
     data: Value,
     addr: SocketAddr,
 ) -> Result<Json<SendEventResponse>, StatusCode> {
-    info!("qww {}", addr);
-
     let result = web_transform_event(data, addr);
     // TODO: save
 
@@ -37,8 +36,7 @@ pub async fn web_send_event(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(data): Json<Value>,
 ) -> Result<Json<SendEventResponse>, StatusCode> {
-    let res = web_send_event_impl(data.clone(), addr.clone()).await;
-    res
+    web_send_event_impl(data.clone(), addr.clone()).await
 }
 
 #[cfg(test)]
@@ -77,7 +75,8 @@ pub mod test {
         let result = web_send_event_impl(
             request,
             "127.0.0.1:8000".parse().expect("Parse addr failed"),
-        ).await;
+        )
+        .await;
 
         assert!(result.is_ok());
     }

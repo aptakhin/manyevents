@@ -127,11 +127,10 @@ pub struct PushApiInfo {
     pub environment_id: Uuid,
 }
 
-pub async fn ensure_push_header_authentification(
-    header: TypedHeader<Authorization<Bearer>>,
+pub async fn ensure_push_header(
+    header_token: String,
     pool: &DbPool,
 ) -> Result<PushApiInfo, AuthError> {
-    let header_token = header.0.token().to_string();
     let push_api_repository = PushApiAuthRepository { pool: pool };
     let resp = PushApiAuth::from(header_token, &push_api_repository).await;
     match resp {
@@ -140,6 +139,14 @@ pub async fn ensure_push_header_authentification(
         }),
         Err(_) => Err(AuthError::InvalidToken),
     }
+}
+
+pub async fn ensure_push_header_authentification(
+    header: TypedHeader<Authorization<Bearer>>,
+    pool: &DbPool,
+) -> Result<PushApiInfo, AuthError> {
+    let header_token = header.0.token().to_string();
+    ensure_push_header(header_token, pool).await
 }
 
 pub enum AccountActionOnTenant {

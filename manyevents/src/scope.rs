@@ -4,6 +4,10 @@ use sqlx::Error;
 use tracing::debug;
 use uuid::Uuid;
 
+use crate::auth::ensure_push_header;
+use crate::ch::{make_migration_plan, ChColumn, ClickHouseRepository};
+use crate::schema::{read_event_data, EventJsonSchema, SerializationType};
+
 pub struct ScopeRepository<'a> {
     pub pool: &'a DbPool,
 }
@@ -166,5 +170,100 @@ impl<'a> ScopeRepository<'a> {
             Ok(Some(_)) => Ok(()),
             Err(e) => Err(format!("SQL error in get_event_schema: {}", e)),
         }
+    }
+}
+
+#[derive(Debug)]
+pub enum PushEventError {
+    AuthError(String),
+    InternalError(String),
+}
+
+pub struct Scope<'a> {
+    pub pool: &'a DbPool,
+}
+
+impl<'a> Scope<'a> {
+    pub async fn push_event(&self, data: Value, token: String) -> Result<(), PushEventError> {
+        // auth
+        let auth_response = ensure_push_header(token, &self.pool).await;
+        if auth_response.is_err() {
+            return Err(PushEventError::AuthError("invalid_auth".to_string()));
+        }
+        let auth_response = auth_response.unwrap();
+
+        // read
+        let result = read_event_data(&data);
+        if result.is_err() {
+            return Err(PushEventError::InternalError(
+                result.unwrap_err().message_code.to_string(),
+            ));
+        }
+
+        // get creds
+        let scope_repository = ScopeRepository { pool: self.pool };
+
+        let res = scope_repository
+            .get_tenant_and_storage_credential_by_environment(auth_response.environment_id.clone())
+            .await;
+
+        if res.is_err() {
+            return Err(PushEventError::InternalError(res.unwrap_err()));
+        }
+
+        let res = res.unwrap();
+        let tenant_id = res.0;
+
+        let unique_suffix = format!("db_{}", tenant_id.clone().as_simple());
+        debug!("Use tenantdb {unique_suffix} for tenant_id={tenant_id}");
+        let tenant_repo = ClickHouseRepository::choose_tenant(&unique_suffix);
+
+        let event = result.unwrap();
+
+        // todo check schema
+
+        let mut columns: Vec<ChColumn> = vec![];
+
+        let mut table_name = None;
+
+        for unit in event.units.iter() {
+            for value in unit.value.iter() {
+                let column = ChColumn {
+                    name: if unit.name != "" {
+                        format!("{}_{}", unit.name, value.name)
+                    } else {
+                        value.name.clone()
+                    },
+                    value: value.value.clone(),
+                };
+                debug!("ins: {}: {:?}", column.name.clone(), value.value.clone());
+                if column.name == "x-manyevents-name" {
+                    if let SerializationType::Str(str) = value.value.clone() {
+                        table_name = Some(str.clone());
+                    }
+                } else {
+                    columns.push(column);
+                }
+            }
+        }
+
+        if table_name.is_none() {
+            return Err(PushEventError::InternalError(
+                "event_name_is_not_given".to_string(),
+            ));
+        }
+
+        let res = tenant_repo
+            .insert(table_name.unwrap().to_string(), columns)
+            .await;
+
+        if res.is_err() {
+            return Err(PushEventError::InternalError(format!(
+                "internal_error: {}",
+                res.unwrap_err()
+            )));
+        }
+
+        Ok(())
     }
 }

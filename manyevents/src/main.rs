@@ -46,7 +46,7 @@ use crate::auth::{
 use crate::ch::{make_migration_plan, ChColumn, ClickHouseRepository};
 use crate::external::web_send_event;
 use crate::schema::{read_event_data, EventJsonSchema, SerializationType};
-use crate::scope::ScopeRepository;
+use crate::scope::{PushEventError, Scope, ScopeRepository};
 use crate::settings::Settings;
 use crate::tenant::{Tenant, TenantRepository};
 
@@ -458,97 +458,21 @@ async fn apply_event_schema_sync(
 async fn push_event(
     auth: TypedHeader<Authorization<Bearer>>,
     State(pool): State<DbPool>,
-    BufferRequestBody(body): BufferRequestBody,
+    Json(value): Json<Value>,
 ) -> Result<Json<PushEventResponse>, StatusCode> {
-    let auth_response = ensure_push_header_authentification(auth, &pool).await;
-    if auth_response.is_err() {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    let auth_response = auth_response.unwrap();
+    let header_token = auth.0.token().to_string();
 
-    let body_str = std::str::from_utf8(&body).unwrap();
-    let data: Result<Value, _> = serde_json::from_str(&body_str);
-    if data.is_err() {
-        return Ok(Json(PushEventResponse {
-            is_success: false,
-            message_code: Some(data.unwrap_err().to_string()),
-        }));
-    }
-    let data = data.unwrap();
-    let result = read_event_data(&data);
+    let scope = Scope { pool: &pool };
+    let result = scope.push_event(value, header_token).await;
 
     if result.is_err() {
-        return Ok(Json(PushEventResponse {
-            is_success: false,
-            message_code: Some(result.unwrap_err().message_code.to_string()),
-        }));
-    }
-
-    let scope_repository = ScopeRepository { pool: &pool };
-
-    let res = scope_repository
-        .get_tenant_and_storage_credential_by_environment(auth_response.environment_id.clone())
-        .await;
-
-    if res.is_err() {
-        return Ok(Json(PushEventResponse {
-            is_success: false,
-            message_code: Some(res.unwrap_err()),
-        }));
-    }
-
-    let res = res.unwrap();
-    let tenant_id = res.0;
-
-    let unique_suffix = format!("db_{}", tenant_id.clone().as_simple());
-    debug!("Use tenantdb {unique_suffix} for tenant_id={tenant_id}");
-    let tenant_repo = ClickHouseRepository::choose_tenant(&unique_suffix);
-
-    let event = result.unwrap();
-
-    // todo check schema
-
-    let mut columns: Vec<ChColumn> = vec![];
-
-    let mut table_name = None;
-
-    for unit in event.units.iter() {
-        for value in unit.value.iter() {
-            let column = ChColumn {
-                name: if unit.name != "" {
-                    format!("{}_{}", unit.name, value.name)
-                } else {
-                    value.name.clone()
-                },
-                value: value.value.clone(),
-            };
-            debug!("ins: {}: {:?}", column.name.clone(), value.value.clone());
-            if column.name == "x-manyevents-name" {
-                if let SerializationType::Str(str) = value.value.clone() {
-                    table_name = Some(str.clone());
-                }
-            } else {
-                columns.push(column);
-            }
-        }
-    }
-
-    if table_name.is_none() {
-        return Ok(Json(PushEventResponse {
-            is_success: false,
-            message_code: Some("event_name_is_not_given".to_string()),
-        }));
-    }
-
-    let res = tenant_repo
-        .insert(table_name.unwrap().to_string(), columns)
-        .await;
-
-    if res.is_err() {
-        return Ok(Json(PushEventResponse {
-            is_success: false,
-            message_code: Some(format!("internal_error: {}", res.unwrap_err())),
-        }));
+        return match result.unwrap_err() {
+            PushEventError::AuthError(message_code) => Err(StatusCode::UNAUTHORIZED),
+            PushEventError::InternalError(message_code) => Ok(Json(PushEventResponse {
+                is_success: false,
+                message_code: Some(format!("{}", message_code)),
+            })),
+        };
     }
 
     Ok(Json(PushEventResponse {
