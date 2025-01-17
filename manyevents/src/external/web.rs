@@ -28,13 +28,14 @@ pub fn validate_json_by_schema(data: Value, schema: Value) -> Result<(), ()> {
         }
     }
 
+    let schema_name = "https://example.com/web.json".to_string();
     let mut schemas = HashMap::new();
-    schemas.insert("https://example.com/web.json".to_string(), schema);
+    schemas.insert(schema_name.clone(), schema);
 
     let retriever = InMemoryRetriever { schemas };
 
     let schema = json!({
-        "$ref": "https://example.com/web.json"
+        "$ref": &schema_name,
     });
 
     let validator = jsonschema::options()

@@ -544,10 +544,7 @@ fn init_logging() {
             .with_line_number(true)
             .pretty();
         tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| format!("{}=debug", env!("CARGO_CRATE_NAME")).into()),
-            )
+            .with(tracing_subscriber::EnvFilter::from_default_env())
             .with(tracing_subscriber::fmt::layer().event_format(pretty_format))
             .init();
     } else {
@@ -560,10 +557,7 @@ fn init_logging() {
             .with_line_number(true)
             .json();
         tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| format!("{}=debug", env!("CARGO_CRATE_NAME")).into()),
-            )
+            .with(tracing_subscriber::EnvFilter::from_default_env())
             .with(tracing_subscriber::fmt::layer().event_format(json_format))
             .init();
     }
@@ -637,9 +631,9 @@ pub mod test {
     }
 
     pub struct TenantPushCreds {
-        push_token: String,
-        api_token: String,
-        tenant_id: Uuid,
+        pub push_token: String,
+        pub api_token: String,
+        pub tenant_id: Uuid,
     }
 
     pub async fn add_tenant_and_push_creds(app: &Router<()>, pool: &DbPool) -> TenantPushCreds {

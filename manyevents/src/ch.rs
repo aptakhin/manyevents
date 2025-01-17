@@ -51,7 +51,7 @@ impl ClickHouseRepository {
             .with_user(settings.get_clickhouse_user())
             .with_password(settings.get_clickhouse_password())
             .with_option("async_insert", "1")
-            .with_option("wait_for_async_insert", "0");
+            .with_option("wait_for_async_insert", "1");
 
         ClickHouseRepository { client }
     }
@@ -64,7 +64,7 @@ impl ClickHouseRepository {
             .with_user(settings.get_clickhouse_user())
             .with_password(settings.get_clickhouse_password())
             .with_option("async_insert", "1")
-            .with_option("wait_for_async_insert", "0");
+            .with_option("wait_for_async_insert", "1");
 
         ClickHouseRepository { client }
     }
@@ -338,7 +338,7 @@ impl ClickHouseTenantRepository {
             .with_password(tenant.db_password)
             .with_database(tenant.db_name)
             .with_option("async_insert", "1")
-            .with_option("wait_for_async_insert", "0");
+            .with_option("wait_for_async_insert", "1");
 
         ClickHouseTenantRepository { client }
     }
