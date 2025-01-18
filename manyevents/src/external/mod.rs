@@ -76,7 +76,7 @@ pub async fn web_send_event(
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use crate::test::{app, pool, tenant_and_push_creds, TenantPushCreds};
+    use crate::test::{app, call_apply_schema_sync, pool, tenant_and_push_creds, TenantPushCreds};
     use crate::{ApplyEventSchemaRequest, Router};
     use rstest::rstest;
     use serde_json::json;
@@ -102,10 +102,12 @@ pub mod test {
         // For now we use this approach with web_send_event_impl.
         let app = app.await;
         let tenant_and_push_creds = tenant_and_push_creds.await;
-        let req = ApplyEventSchemaRequest {
-            tenant_id: tenant_and_push_creds.tenant_id,
-            name: "main".to_string(),
-            schema: json!({
+        let response = call_apply_schema_sync(
+            tenant_and_push_creds.tenant_id,
+            tenant_and_push_creds.api_token,
+            "main".to_string(),
+            &app,
+            json!({
                 "type": "object",
                 "properties": {
                     "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
@@ -122,25 +124,8 @@ pub mod test {
                 "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
                 "x-manyevents-ch-partition-by": "base_timestamp",
             }),
-        };
-        let request_str = serde_json::to_string(&req).unwrap();
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(http::Method::POST)
-                    .header("Content-Type", "application/json")
-                    .header(
-                        "Authorization",
-                        format!("Bearer {}", tenant_and_push_creds.api_token),
-                    )
-                    .uri("/manage-api/v0-unstable/apply-event-schema-sync")
-                    .body(Body::from(request_str.clone()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        ).await;
+        assert!(response.is_ok());
         let request = json!({
             "hostname": "localhost",
             "path": "/assets/test.html",

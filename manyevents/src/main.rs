@@ -745,6 +745,41 @@ pub mod test {
         tenant_response
     }
 
+    pub async fn call_apply_schema_sync(
+        tenant_id: Uuid,
+        api_token: String,
+        name: String,
+        app: &Router<()>,
+        schema: Value,
+    ) -> Result<(), ()> {
+        let req = ApplyEventSchemaRequest {
+            tenant_id,
+            name,
+            schema,
+        };
+        let request_str = serde_json::to_string(&req).unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", api_token))
+                    .uri("/manage-api/v0-unstable/apply-event-schema-sync")
+                    .body(Body::from(request_str.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        if response.status() == StatusCode::OK {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
     #[rstest]
     #[tokio::test]
     #[traced_test]
@@ -932,10 +967,13 @@ pub mod test {
     ) {
         let app = app.await;
         let tenant_and_push_creds = tenant_and_push_creds.await;
-        let req = ApplyEventSchemaRequest {
-            tenant_id: tenant_and_push_creds.tenant_id,
-            name: "main".to_string(),
-            schema: json!({
+
+        let response = call_apply_schema_sync(
+            tenant_and_push_creds.tenant_id,
+            tenant_and_push_creds.api_token,
+            "main".to_string(),
+            &app,
+            json!({
                 "type": "object",
                 "properties": {
                     "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
@@ -949,27 +987,9 @@ pub mod test {
                 "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
                 "x-manyevents-ch-partition-by": "base_timestamp",
             }),
-        };
-        let request_str = serde_json::to_string(&req).unwrap();
+        ).await;
 
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(http::Method::POST)
-                    .header("Content-Type", "application/json")
-                    .header(
-                        "Authorization",
-                        format!("Bearer {}", tenant_and_push_creds.api_token),
-                    )
-                    .uri("/manage-api/v0-unstable/apply-event-schema-sync")
-                    .body(Body::from(request_str.clone()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.is_ok());
     }
 
     #[rstest]
@@ -981,10 +1001,12 @@ pub mod test {
     ) {
         let app = app.await;
         let tenant_and_push_creds = tenant_and_push_creds.await;
-        let req = ApplyEventSchemaRequest {
-            tenant_id: tenant_and_push_creds.tenant_id,
-            name: "main".to_string(),
-            schema: json!({
+        let response = call_apply_schema_sync(
+            tenant_and_push_creds.tenant_id,
+            tenant_and_push_creds.api_token,
+            "main".to_string(),
+            &app,
+            json!({
                 "type": "object",
                 "properties": {
                     "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
@@ -998,26 +1020,8 @@ pub mod test {
                 "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
                 "x-manyevents-ch-partition-by": "base_timestamp",
             }),
-        };
-        let request_str = serde_json::to_string(&req).unwrap();
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(http::Method::POST)
-                    .header("Content-Type", "application/json")
-                    .header(
-                        "Authorization",
-                        format!("Bearer {}", tenant_and_push_creds.api_token),
-                    )
-                    .uri("/manage-api/v0-unstable/apply-event-schema-sync")
-                    .body(Body::from(request_str.clone()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-
+        ).await;
+        assert!(response.is_ok());
         let push_request_str = r#"{
             "x-manyevents-name": "main",
             "span_id": "xxxx",
@@ -1188,20 +1192,16 @@ pub mod test {
     #[traced_test]
     async fn test_apply_event_double_schema_change(
         #[future] app: Router<()>,
-        #[future] pool: DbPool,
+        #[future] tenant_and_push_creds: TenantPushCreds,
     ) {
         let app = app.await;
-        let pool = pool.await;
-        let api_auth_repository = ApiAuthRepository { pool: &pool };
-        let account = add_random_email_account(&pool).await;
-        let auth_token = ApiAuth::create_new(account, &api_auth_repository).await;
-        let bearer = auth_token.unwrap().token;
-        let tenant = create_tenant("test-tenant".to_string(), bearer.clone(), &app).await;
-
-        let req = ApplyEventSchemaRequest {
-            tenant_id: tenant.id.unwrap(),
-            name: "main".to_string(),
-            schema: json!({
+        let tenant_and_push_creds = tenant_and_push_creds.await;
+        let response = call_apply_schema_sync(
+            tenant_and_push_creds.tenant_id.clone(),
+            tenant_and_push_creds.api_token.clone(),
+            "main".to_string(),
+            &app,
+            json!({
                 "type": "object",
                 "properties": {
                     "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
@@ -1212,27 +1212,15 @@ pub mod test {
                 "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
                 "x-manyevents-ch-partition-by": "base_timestamp",
             }),
-        };
-        let request_str = serde_json::to_string(&req).unwrap();
+        ).await;
+        assert!(response.is_ok(), "Apply schema response: {:?}", response);
 
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(http::Method::POST)
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", format!("Bearer {}", bearer))
-                    .uri("/manage-api/v0-unstable/apply-event-schema-sync")
-                    .body(Body::from(request_str.clone()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let req = ApplyEventSchemaRequest {
-            tenant_id: tenant.id.unwrap(),
-            name: "main".to_string(),
-            schema: json!({
+        let response = call_apply_schema_sync(
+            tenant_and_push_creds.tenant_id,
+            tenant_and_push_creds.api_token,
+            "main".to_string(),
+            &app,
+            json!({
                 "type": "object",
                 "properties": {
                     "base_timestamp": { "type": "integer", "x-manyevents-ch-type": "DateTime64(3)" },
@@ -1244,23 +1232,7 @@ pub mod test {
                 "x-manyevents-ch-partition-by-func": "toYYYYMMDD",
                 "x-manyevents-ch-partition-by": "base_timestamp",
             }),
-        };
-        let request_str = serde_json::to_string(&req).unwrap();
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(http::Method::POST)
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", format!("Bearer {}", bearer))
-                    .uri("/manage-api/v0-unstable/apply-event-schema-sync")
-                    .body(Body::from(request_str.clone()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
+        ).await;
+        assert!(response.is_ok(), "Apply schema response: {:?}", response);
     }
 }
