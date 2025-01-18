@@ -63,7 +63,6 @@ pub fn web_transform_event(data: Value, ip: SocketAddr) -> Result<Value, ()> {
         return Err(());
     }
 
-    let result = result.unwrap();
     let mut data = data;
     // the best ip -> country conversion
     data["country"] = "earth".into();

@@ -1,7 +1,5 @@
 use crate::Uuid;
 use serde_json::Value;
-use std::net::SocketAddr;
-use tracing::info;
 
 pub trait PushApi {
     fn push_event(

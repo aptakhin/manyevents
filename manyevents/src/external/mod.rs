@@ -1,8 +1,8 @@
 pub mod client;
 pub mod web;
 
-use crate::{scope::Scope, BufferRequestBody, DbPool};
-use axum::extract::{Request, State};
+use crate::{scope::Scope, DbPool};
+use axum::extract::State;
 use axum::{
     extract::ConnectInfo,
     http::header::{HeaderMap, HeaderValue},
