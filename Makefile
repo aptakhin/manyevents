@@ -7,6 +7,9 @@ runw::
 test::
 	(cd manyevents && cargo test)
 
+test-pre-commit::
+	(PATH="$PATH:/Users/`whoami`/.cargo/bin" && set -a && source .env && set +a && cd manyevents && cargo test)
+
 testw::
 	(cd manyevents && RUST_LOG=debug RUST_BACKTRACE=1 cargo watch --clear -- cargo test)
 
@@ -18,6 +21,9 @@ build-release::
 
 fmt::
 	(cd manyevents && cargo fmt --all)
+
+fmt-pre-commit::
+	(PATH="$PATH:/Users/`whoami`/.cargo/bin" && cd manyevents && cargo fmt --all)
 
 fix::
 	(cd manyevents && cargo fix)

@@ -55,8 +55,8 @@ type DbPool = PgPool;
 async fn make_db() -> DbPool {
     let db_connection_str = Settings::read_settings().postgres_dsn;
     PgPoolOptions::new()
-        .max_connections(5)
-        .acquire_timeout(Duration::from_secs(3))
+        .max_connections(10)
+        .acquire_timeout(Duration::from_secs(5))
         .connect(&db_connection_str)
         .await
         .expect("Can't connect to the database")

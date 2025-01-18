@@ -127,6 +127,20 @@ make testw
 make runw
 ```
 
+## Pre-commit
+
+For regular development `pre-commit` installation is recommended. Path to `cargo` must be added in `PATH` variable in pre-commit. This is currently handled in `fmt-pre-commit` and `test-pre-commit` in `Makefile`.
+
+```bash
+# For Mac
+brew install pre-commit
+pre-commit install
+
+# Through uv
+uv tool install pre-commit
+uv tool run pre-commit install
+```
+
 I use [Miro board](https://miro.com/app/board/uXjVL9mlc6Y=/?share_link_id=101307934260) for brainstorming. There various things could be found for the product development.
 
 ## Install tools

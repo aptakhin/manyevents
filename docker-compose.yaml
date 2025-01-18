@@ -13,6 +13,9 @@ services:
     image: postgres:17
     container_name: postgres
     restart: unless-stopped
+    command: -c 'max_connections=200'
+    stdin_open: true
+    tty: true
     env_file:
     - .env
     ports:
